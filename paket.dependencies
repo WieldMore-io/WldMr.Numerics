@@ -1,0 +1,48 @@
+
+source https://api.nuget.org/v3/index.json
+
+storage: none
+framework: netstandard2.0, netstandard2.1, net472, net5.0, net6.0-windows
+
+nuget FSharp.Core
+
+nuget System.Memory
+
+nuget FsToolkit.ErrorHandling >= 3 beta
+
+// for DiffSharp
+nuget FSharp.Quotations.Evaluator
+
+
+// for tests
+nuget MathNet.Numerics
+nuget MathNet.Numerics.FSharp
+
+nuget YoloDev.Expecto.TestSdk
+nuget coverlet.collector
+nuget Microsoft.NET.Test.Sdk
+nuget xunit
+nuget xunit.runner.visualstudio
+
+
+nuget Expecto.FsCheck
+nuget FsCheck
+nuget FsCheck.NUnit
+nuget FsCheck.Xunit
+nuget NUnit3TestAdapter
+
+nuget Fable.Mocha
+
+nuget Fable.Core
+
+
+nuget BenchmarkDotNet
+
+nuget DotNet.ReproducibleBuilds copy_local: true
+
+nuget ObjectLayoutInspector
+
+source https://pkgs.dev.azure.com/WldMr/_packaging/WldMr/nuget/v3/index.json
+nuget WldMr.FSharp.Extensions
+
+// http file:///c:/git/WldMr.Excel/src/WldMr.Excel.Utilities/bin/Debug/net461/WldMr.Excel.Utilities.dll

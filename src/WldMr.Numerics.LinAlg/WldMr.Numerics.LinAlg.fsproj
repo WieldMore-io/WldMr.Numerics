@@ -1,0 +1,35 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>WldMr.Numerics.LinAlg</PackageId>
+    <Product>Wieldmore Linear Algebra</Product>
+    <Description>Linear Algebra</Description>
+  </PropertyGroup>
+  
+  <ItemGroup>
+<!--    <Content Include="*.fsproj; **\*.fs; **\*.fsi" PackagePath="fable\" />-->
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="scripts/MathNetParse.fsx" />
+    <None Include="paket.references" />
+    <Compile Include="FableExt.fs" />
+    <Compile Include="LiteBlas.fs" />
+    <Compile Include="Mat.fs" />
+    <Compile Include="CsrMat.fs" />
+    <Compile Include="GenMat.fs" />
+    <Compile Include="Erf.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="*.fs" PackagePath="fable/" />
+    <Content Include="*.fsproj" PackagePath="fable/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Do not remove the next line -->
+    <!-- LocalWldMrDependencies -->
+  </ItemGroup>
+
+  <Import Project="..\..\.paket\Paket.Restore.targets" />
+</Project>
