@@ -1,0 +1,24 @@
+<Project>
+  <PropertyGroup>
+    <Configurations>Debug;Release</Configurations>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <WarningsAsErrors>FS0025</WarningsAsErrors>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" PrivateAssets="All" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <Version>0.0.1</Version>
+    <Company>Wieldmore Investment Limited</Company>
+    <Authors>PY Rivaille</Authors>
+    <Copyright>Copyright © 2020-2022 Wieldmore Investment Limited</Copyright>
+  </PropertyGroup>
+
+</Project>

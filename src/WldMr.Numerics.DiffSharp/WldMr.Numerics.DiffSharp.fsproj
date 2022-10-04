@@ -1,0 +1,40 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>WldMr.Numerics.DiffSharp</PackageId>
+<!--    <OtherFlags>/warnon:1182</OtherFlags>-->
+    <Description>Automatic differentiation</Description>
+    <Authors>Atılım Güneş Baydin,Barak A. Pearlmutter, PY Rivaille</Authors>
+    <PackageLicenseExpression>BSD-2-Clause</PackageLicenseExpression>
+    <Title>DiffSharp: Automatic Differentiation Library</Title>
+    <Copyright>Copyright (c) 2016-2019     University of Oxford (Atilim Gunes Baydin)
+Copyright (c) 2017-2019     Microsoft Research, Cambridge, UK (Don Syme)
+Copyright (c) 2014-2019     National University of Ireland Maynooth (Barak A. Pearlmutter)
+Copyright (c) 2014-2016     National University of Ireland Maynooth (Atilim Gunes Baydin)
+Copyright (c) 2020-         Pierre-Yves Rivaille      
+    </Copyright>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WldMr.Numerics.LinAlg\WldMr.Numerics.LinAlg.fsproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Util.fs" />
+    <Compile Include="Backend.Lite.fs" />
+    <Compile Include="Config.fs" />
+    <Compile Include="AD.Lite.fs" />
+    <Compile Include="Numerical.Float64.fs" />
+    <Compile Include="Symbolic.Float64.fs" />
+    <None Include="paket.references" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="*.fs" PackagePath="fable/" />
+    <Content Include="*.fsproj" PackagePath="fable/" />
+  </ItemGroup>
+
+
+
+  <Import Project="..\..\.paket\Paket.Restore.targets" />
+</Project>

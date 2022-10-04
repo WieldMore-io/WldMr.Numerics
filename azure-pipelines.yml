@@ -1,0 +1,170 @@
+# ASP.NET Core (.NET Framework)
+# Build and test ASP.NET Core projects targeting the full .NET Framework.
+# Add steps that publish symbols, save build artifacts, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
+
+trigger:
+- '*'
+
+pool:
+  name: Azure Pipelines
+  vmImage: 'ubuntu-latest'
+
+
+variables:
+  major: 0
+  minor: 9
+  buildConfiguration: 'Release'
+  NUGET_PACKAGES: $(Pipeline.Workspace)/.nuget/packages
+  isNotaPR: $[ne(variables['Build.Reason'], 'PullRequest')]
+  ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
+    versionSuffix: '-PR'
+    patch: $[counter(format('{0}.{1}.{2}', variables['Major'], variables['Minor'], variables['versionSuffix']), 0)]
+    packageVersion: $[format('{0}.{1}.{2}-PR', variables['major'], variables['minor'], variables['patch']) ]
+    buildName: $[ format('PR {0}', variables['packageVersion']) ]
+  ${{ if ne(variables['Build.Reason'], 'PullRequest') }}:
+    ${{ if eq(variables['Build.SourceBranchName'], 'master') }}:
+      # full release
+      patch: $[counter(format('{0}.{1}', variables['Major'], variables['Minor']), 0)]
+      packageVersion: $[format('{0}.{1}.{2}', variables['major'], variables['minor'], variables['patch']) ]
+      buildName: $[ format('🚀 Release {0}', variables['packageVersion']) ]      
+
+    ${{ if ne(variables['Build.SourceBranchName'], 'master') }}:
+      # a branch
+      patch: $[counter(format('{0}.{1}.{2} branch', variables['Major'], variables['Minor'], variables['Build.SourceBranchName']), 0)]
+      packageVersion: $[format('{0}.{1}.{2}-branch', variables['major'], variables['minor'], variables['patch']) ]
+      buildName: $[ format('Branch {0} -- {1}', variables['Build.SourceBranchName'], variables['patch']) ]
+  # packageVersion: $(major).$(minor).$(versionSuffix)$(patch)
+    
+
+name: $(buildName)
+
+steps:
+# - task: Cache@2
+#   inputs:
+#     key: 'paket | CommonDataLogic_v1 | "$(Agent.OS)" | paket.lock'
+#     restoreKeys: |
+#       paket | CommonDataLogic_v1 | "$(Agent.OS)" | paket.lock
+#     path: $(NUGET_PACKAGES)
+#   displayName: Cache NuGet/Paket packages
+- task: DotNetCoreCLI@2
+  displayName: 'dotnet --info'
+  inputs:
+    command: custom
+    custom: '--info'
+
+- task: UseDotNet@2
+  displayName: 'Install .NET Core 6 sdk'
+  inputs:
+    packageType: sdk
+    version: 6.0.x
+    installationPath: $(Agent.ToolsDirectory)/dotnet
+
+- task: UseDotNet@2
+  displayName: 'Install .NET Core 5 sdk'
+  inputs:
+    packageType: sdk
+    version: 5.0.x
+    installationPath: $(Agent.ToolsDirectory)/dotnet
+
+- task: UseDotNet@2
+  displayName: 'Use .NET Core 2.0 runtime'
+  inputs:
+    packageType: runtime
+    version: 2.0.x
+    installationPath: $(Agent.ToolsDirectory)/dotnet
+
+- task: DotNetCoreCLI@2
+  displayName: 'dotnet --info'
+  inputs:
+    command: custom
+    custom: '--info'
+
+- task: DotNetCoreCLI@2
+  displayName: 'dotnet tool restore'
+  inputs:
+    command: custom
+    custom: tool
+    arguments: restore
+
+- task: setCredentialManager@0
+  displayName: 'credentials for Paket'
+
+- task: DotNetCoreCLI@2
+  displayName: 'dotnet paket restore'
+  inputs:
+    command: custom
+    custom: paket
+    arguments: 'restore'
+
+#- task: Npm@1
+#  displayName: 'npm install'
+#  inputs:
+#    command: 'install'
+#    workingDir: '$(Build.SourcesDirectory)/tests/MochaTests'
+#
+#- task: Npm@1
+#  displayName: 'npm run test'
+#  inputs:
+#    command: 'custom'
+#    workingDir: '$(Build.SourcesDirectory)/tests/MochaTests'
+#    customCommand: 'run test'
+
+# - task: DotNetCoreCLI@2
+#   displayName: 'dotnet build -c $(buildConfiguration)'
+#   inputs:
+#     command: 'build'
+#     arguments: >-
+#       -p:Version=$(packageVersion) -p:InformationalVersion=$(packageVersion)-$(Build.SourceVersion) 
+#       --configuration $(buildConfiguration)
+
+
+- task: DotNetCoreCLI@2
+  displayName: 'dotnet test -c $(buildConfiguration)'
+  inputs:
+    command: 'test'
+    arguments: >-
+      -p:Version=$(packageVersion) -p:InformationalVersion=$(packageVersion)-$(Build.SourceVersion) 
+      --configuration $(buildConfiguration)
+
+
+- task: DotNetCoreCLI@2
+  displayName: 'dotnet pack'
+  inputs:
+    command: 'custom'
+    custom: pack
+    arguments: >-
+        -p:Version=$(packageVersion) -p:InformationalVersion=$(packageVersion)-$(Build.SourceVersion) 
+        --configuration $(buildConfiguration)
+        -o $(Build.ArtifactStagingDirectory)
+        --no-restore
+
+
+- task: PublishPipelineArtifact@1
+  displayName: 'publish artifact: nupkg'
+  inputs:
+    targetPath: '$(Build.ArtifactStagingDirectory)'
+    artifactName: 'nuget package'
+
+
+- task: GithubRelease@0
+  displayName: 'Create GitHub Release'
+  condition: and(succeeded(), eq(variables.isNotaPR, true), eq(variables['Build.Repository.Uri'], 'https://github.com/WieldMore-io/WldMr.Numerics'))
+  inputs:
+    gitHubConnection: github.com_PierreYvesR
+    repositoryName: WieldMore-io/WldMr.Numerics
+    tagSource: manual
+    addChangeLog: false
+    #isPreRelease: true
+    tag: $(packageVersion)
+
+
+- task: DotNetCoreCLI@2
+  displayName: 'dotnet push ▶ Azure artifacts'
+  condition: and(succeeded(), eq(variables.isNotaPR, true), eq(variables['Build.Repository.Uri'], 'https://github.com/WieldMore-io/WldMr.Numerics'))
+  inputs:
+    command: 'push'
+    packagesToPush: '$(Build.ArtifactStagingDirectory)/*.nupkg'
+    nuGetFeedType: 'internal'
+    publishVstsFeed: '67473a16-5083-4137-baa3-2f71cd705f9b'
+
