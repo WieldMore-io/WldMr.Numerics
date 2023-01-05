@@ -3,7 +3,7 @@
 // Copyright (c) 2017-     Microsoft Research, Cambridge, UK (Don Syme <dsyme@microsoft.com>)
 // Copyright (c) 2014-     National University of Ireland Maynooth (Barak A. Pearlmutter <barak@pearlmutter.net>)
 // Copyright (c) 2014-2016 National University of Ireland Maynooth (Atilim Gunes Baydin)
-// Copyright (c) 2020-2021 Pierre-Yves Rivaille - Wieldmore
+// Copyright (c) 2020-2021 Pierre-Yves Rivaille - Wieldmore IM Ltd
 // This code is licensed under the BSD license (see LICENSE file for details)
 
 module WldMr.Analytics.DiffSharp.Tests.Backend
