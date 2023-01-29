@@ -53,42 +53,12 @@ steps:
     command: custom
     custom: '--info'
 
-- task: UseDotNet@2
-  displayName: 'Install .NET Core 6 sdk'
-  inputs:
-    packageType: sdk
-    version: 6.0.x
-    installationPath: $(Agent.ToolsDirectory)/dotnet
-
-- task: UseDotNet@2
-  displayName: 'Install .NET Core 5 sdk'
-  inputs:
-    packageType: sdk
-    version: 5.0.x
-    installationPath: $(Agent.ToolsDirectory)/dotnet
-
-- task: UseDotNet@2
-  displayName: 'Use .NET Core 2.0 runtime'
-  inputs:
-    packageType: runtime
-    version: 2.0.x
-    installationPath: $(Agent.ToolsDirectory)/dotnet
-
-- task: DotNetCoreCLI@2
-  displayName: 'dotnet --info'
-  inputs:
-    command: custom
-    custom: '--info'
-
 - task: DotNetCoreCLI@2
   displayName: 'dotnet tool restore'
   inputs:
     command: custom
     custom: tool
     arguments: restore
-
-- task: setCredentialManager@0
-  displayName: 'credentials for Paket'
 
 - task: DotNetCoreCLI@2
   displayName: 'dotnet paket restore'
@@ -167,4 +137,3 @@ steps:
     packagesToPush: '$(Build.ArtifactStagingDirectory)/*.nupkg'
     nuGetFeedType: 'internal'
     publishVstsFeed: '67473a16-5083-4137-baa3-2f71cd705f9b'
-
