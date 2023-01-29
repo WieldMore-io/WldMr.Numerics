@@ -1,4 +1,4 @@
-﻿module WldMr.Analytics.LinAlg.CsrMat
+﻿module WldMr.Numerics.LinAlg.CsrMat
 
 
 [<Struct>]

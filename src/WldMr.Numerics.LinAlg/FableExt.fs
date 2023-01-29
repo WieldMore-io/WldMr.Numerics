@@ -1,4 +1,5 @@
-﻿namespace WldMr.Fable
+﻿namespace WldMr.Numerics.Fable
+
 open Fable.Core
 
 module System =

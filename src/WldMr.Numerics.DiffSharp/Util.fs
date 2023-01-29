@@ -6,7 +6,7 @@
 // This code is licensed under the BSD license (see LICENSE file for details)
 
 /// Various utility functions
-module WldMr.Analytics.DiffSharp.Util
+module WldMr.Numerics.DiffSharp.Util
 
 #if FABLE_COMPILER
 module Parallel =

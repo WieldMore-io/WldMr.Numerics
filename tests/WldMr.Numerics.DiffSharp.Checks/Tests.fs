@@ -5,11 +5,11 @@
 // Copyright (c) 2014-2016 National University of Ireland Maynooth (Atilim Gunes Baydin)
 // This code is licensed under the BSD license (see LICENSE file for details)
 
-namespace WldMr.Analytics.DiffSharp.Tests
+namespace WldMr.Numerics.DiffSharp.Tests
 
-open WldMr.Analytics.DiffSharp
-open WldMr.Analytics.DiffSharp.Util
-open WldMr.Analytics.LinAlg
+open WldMr.Numerics.DiffSharp
+open WldMr.Numerics.DiffSharp.Util
+open WldMr.Numerics.LinAlg
 
 type Util() =
     static let eps64 = 1e-4
@@ -45,7 +45,7 @@ type Util() =
         else
              abs (a - b) < eps64
 
-    static member (=~) (a:WldMr.Analytics.DiffSharp.AD.Float64.D, b:AD.Float64.D) =
+    static member (=~) (a:WldMr.Numerics.DiffSharp.AD.Float64.D, b:AD.Float64.D) =
         Util.(=~)(AD.Float64.DOps.toFloat a, AD.Float64.DOps.toFloat b)
 
     static member (=~) (a:float[], b:float[]) =

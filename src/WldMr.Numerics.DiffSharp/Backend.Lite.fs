@@ -9,11 +9,11 @@
 #nowarn "51"
 // fsharplint:disable ParameterNames PublicValuesNames
 
-namespace WldMr.Analytics.DiffSharp
+namespace WldMr.Numerics.DiffSharp
 
 open System
-open WldMr.Analytics.DiffSharp.Util
-open WldMr.Analytics.LinAlg
+open WldMr.Numerics.DiffSharp.Util
+open WldMr.Numerics.LinAlg
 
 module Lite =
 

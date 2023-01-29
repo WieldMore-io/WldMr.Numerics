@@ -1,4 +1,4 @@
-﻿namespace WldMr.Analytics
+﻿namespace WldMr.Numerics
 
 
 [<RequireQualifiedAccess>]
@@ -505,9 +505,9 @@ module SpecialFunctions =
   let erf(x: float) =
     if x = 0.0 then
       0.0
-    elif WldMr.Fable.System.Double.IsPositiveInfinity x then
+    elif Fable.System.Double.IsPositiveInfinity x then
       1.0
-    elif WldMr.Fable.System.Double.IsNegativeInfinity x then
+    elif Fable.System.Double.IsNegativeInfinity x then
       -1.0
     elif System.Double.IsNaN x then
       System.Double.NaN

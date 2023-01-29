@@ -5,11 +5,11 @@
 // Copyright (c) 2014-2016 National University of Ireland Maynooth (Atilim Gunes Baydin)
 // This code is licensed under the BSD license (see LICENSE file for details)
 
-module WldMr.Analytics.DiffSharp.Tests.AD.Float64
+module WldMr.Numerics.DiffSharp.Tests.AD.Float64
 
 open FsCheck.NUnit
-open WldMr.Analytics.DiffSharp.Tests
-open WldMr.Analytics.DiffSharp.AD.Float64
+open WldMr.Numerics.DiffSharp.Tests
+open WldMr.Numerics.DiffSharp.AD.Float64
 
 [<Property>]
 let ``FixedPoint forward``() =

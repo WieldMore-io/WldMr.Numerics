@@ -5,7 +5,7 @@
 // Copyright (c) 2014-2016 National University of Ireland Maynooth (Atilim Gunes Baydin)
 // This code is licensed under the BSD license (see LICENSE file for details)
 
-namespace WldMr.Analytics.LinAlg.Tests
+namespace WldMr.Numerics.LinAlg.Tests
 
 
 module Array2D =

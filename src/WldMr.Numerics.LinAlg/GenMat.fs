@@ -1,11 +1,9 @@
-﻿namespace WldMr.Analytics.LinAlg
+﻿namespace WldMr.Numerics.LinAlg
 
 
 [<AutoOpen>]
 module GenMat =
-
   open CsrMat
-  open WldMr.Analytics.LinAlg
 
   type GenMat =
     | ColMajor of Mat

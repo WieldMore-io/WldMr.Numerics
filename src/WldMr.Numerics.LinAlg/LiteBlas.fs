@@ -1,4 +1,4 @@
-﻿namespace WldMr.Analytics.LinAlg
+﻿namespace WldMr.Numerics.LinAlg
 
 
 #if !FABLE_COMPILER

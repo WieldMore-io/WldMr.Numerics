@@ -1,7 +1,7 @@
-module WldMr.Analytics.LinAlg.Tests.Mat
+module WldMr.Numerics.LinAlg.Tests.Mat
 
 open Expecto
-open WldMr.Analytics.LinAlg
+open WldMr.Numerics.LinAlg
 open FsCheck
 
 
