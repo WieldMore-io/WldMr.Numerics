@@ -1,9 +1,9 @@
-﻿module WldMr.Analytics.LinAlg.Tests.CscMat
+﻿module WldMr.Numerics.LinAlg.Tests.CscMat
 
-open WldMr.Analytics.LinAlg
 open Expecto
 open Expecto.Flip
-open WldMr.Analytics.LinAlg.CsrMat
+open WldMr.Numerics.LinAlg
+open WldMr.Numerics.LinAlg.CsrMat
 
 
 [<Tests>]

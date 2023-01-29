@@ -5,7 +5,7 @@
 // Copyright (c) 2014-2016 National University of Ireland Maynooth (Atilim Gunes Baydin)
 // This code is licensed under the BSD license (see LICENSE file for details)
 
-namespace WldMr.Analytics.DiffSharp.Config
+namespace WldMr.Numerics.DiffSharp.Config
 
 
 /// Record type holding configuration parameters

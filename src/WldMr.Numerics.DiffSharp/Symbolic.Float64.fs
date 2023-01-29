@@ -1,5 +1,5 @@
 ﻿#if FABLE_COMPILER
-module WldMr.Analytics.DiffSharp.NotAvailable.Float64
+module WldMr.Numerics.DiffSharp.NotAvailable.Float64
 #else
 // This file is part of DiffSharp: Differentiable Functional Programming - https://diffsharp.github.io
 // Copyright (c) 2016-     University of Oxford (Atilim Gunes Baydin <gunes@robots.ox.ac.uk>)
@@ -9,7 +9,7 @@ module WldMr.Analytics.DiffSharp.NotAvailable.Float64
 // This code is licensed under the BSD license (see LICENSE file for details)
 
 /// Symbolic differentiation module
-module WldMr.Analytics.DiffSharp.Symbolic.Float64
+module WldMr.Numerics.DiffSharp.Symbolic.Float64
 
 
 open FSharp.Quotations
@@ -17,9 +17,9 @@ open FSharp.Quotations.Patterns
 open FSharp.Quotations.DerivedPatterns
 open FSharp.Quotations.ExprShape
 open FSharp.Quotations.Evaluator
-open WldMr.Analytics.DiffSharp
-open WldMr.Analytics.DiffSharp.Util
-open WldMr.Analytics.LinAlg
+open WldMr.Numerics.DiffSharp
+open WldMr.Numerics.DiffSharp.Util
+open WldMr.Numerics.LinAlg
 
 #nowarn "77" "1182"
 

@@ -6,14 +6,14 @@
 // This code is licensed under the BSD license (see LICENSE file for details)
 
 /// Numerical differentiation module
-module WldMr.Analytics.DiffSharp.Numerical.Float64
+module WldMr.Numerics.DiffSharp.Numerical.Float64
 
 #if !FABLE_COMPILER
 
-open WldMr.Analytics.DiffSharp
-open WldMr.Analytics.DiffSharp.Util
-open WldMr.Analytics.DiffSharp.Config
-open WldMr.Analytics.LinAlg
+open WldMr.Numerics.DiffSharp
+open WldMr.Numerics.DiffSharp.Util
+open WldMr.Numerics.DiffSharp.Config
+open WldMr.Numerics.LinAlg
 
 /// Numerical differentiation operations module (automatically opened)
 [<AutoOpen>]

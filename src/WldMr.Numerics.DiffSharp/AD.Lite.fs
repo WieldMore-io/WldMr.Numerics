@@ -10,15 +10,15 @@
 // fsharplint:disable MaxNumberOfItemsInTuple
 
 /// Nested forward and reverse mode automatic differentiation module
-module WldMr.Analytics.DiffSharp.AD.Float64 //.Lite
+module WldMr.Numerics.DiffSharp.AD.Float64 //.Lite
 
 #nowarn "77" "1182"
 
-open WldMr.Analytics.DiffSharp.Util
-open WldMr.Analytics.DiffSharp.Config
-open WldMr.Analytics.LinAlg
+open WldMr.Numerics.DiffSharp.Util
+open WldMr.Numerics.DiffSharp.Config
+open WldMr.Numerics.LinAlg
 
-open WldMr.Analytics.DiffSharp.Lite
+open WldMr.Numerics.DiffSharp.Lite
 
 type number = float
 
@@ -335,7 +335,7 @@ type D =
         D.Op_D_D (a, ff, fd, df, r)
 
     static member Erf (a:D) =
-        let inline ff(a) = WldMr.Analytics.SpecialFunctions.erf a
+        let inline ff(a) = WldMr.Numerics.SpecialFunctions.erf a
         let inline fd(a: D) = D.Erf a
         let inline df(cp:D, ap:D, at:D) =
             at * 2. * 0.5641895835477562979446191655 * (exp (- (ap ** 2)))

@@ -6,14 +6,14 @@
 // Copyright (c) 2020-2021 Pierre-Yves Rivaille - Wieldmore IM Ltd
 // This code is licensed under the BSD license (see LICENSE file for details)
 
-module WldMr.Analytics.DiffSharp.Tests.Backend
+module WldMr.Numerics.DiffSharp.Tests.Backend
 
 open NUnit.Framework
 open FsCheck.NUnit
-open WldMr.Analytics.DiffSharp
-open WldMr.Analytics.DiffSharp.Util
-open WldMr.Analytics.DiffSharp.Tests
-open WldMr.Analytics.LinAlg
+open WldMr.Numerics.DiffSharp
+open WldMr.Numerics.DiffSharp.Util
+open WldMr.Numerics.DiffSharp.Tests
+open WldMr.Numerics.LinAlg
 
 
 //
