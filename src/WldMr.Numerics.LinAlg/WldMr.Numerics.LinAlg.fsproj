@@ -16,6 +16,7 @@
     <Compile Include="FableExt.fs" />
     <Compile Include="LiteBlas.fs" />
     <Compile Include="Mat.fs" />
+    <Compile Include="Vec.fs" />
     <Compile Include="CsrMat.fs" />
     <Compile Include="GenMat.fs" />
     <Compile Include="Erf.fs" />

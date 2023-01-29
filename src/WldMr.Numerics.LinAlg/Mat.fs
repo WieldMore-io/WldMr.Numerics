@@ -267,6 +267,16 @@ module Mat =
       (fun i j -> a.[j, i])
   #endif
 
+  let ofRowsArray (a: float[][]) =
+    let nRows = a.Length
+    let nCols = a.[0].Length
+    Mat.init nRows nCols (fun i j -> a.[i].[j])
+
+  let ofColsArray (a: float[][]) =
+    let nRows = a.[0].Length
+    let nCols = a.Length
+    Mat.init nRows nCols (fun i j -> a.[j].[i])
+
   let rowVector (v: float[]) =
     {
       Data= Array.copyFast v
@@ -411,6 +421,35 @@ module Mat =
       size
     ) |> ignore
     res
+
+  let solveMV (m: Mat) (b: float array) =
+    let xl1 = m.NRows
+    let xl2 = m.NCols
+    let yl = b.Length
+    if xl1 * xl2 * yl = 0 then
+      Error "At least one dimension is 0."
+    elif xl1 <> yl then
+      Error "Length of vector must match number of rows of matrix."
+    else
+      let size = m.NRows
+      let iPiv = Array.create size 0
+      let res = Array.copyFast b
+      let tempM = copy m
+      let info =
+        Blas.dgesvUnblocked(
+          size,
+          1,
+          WSpan.span tempM.Data,
+          m.NRows,
+          WSpan.span iPiv,
+          WSpan.span res,
+          1
+        )
+      if info <> 0 then
+        Error $"solveMV error. Code: {info}"
+      else
+        Ok res
+
 
 module MatT =
   let map<'T, 'U> (f: 'T -> 'U) (mat: MatT<'T>): MatT<'U> =
