@@ -294,42 +294,42 @@ type D =
 
     static member Log (a:D) =
         let inline ff(a) = log a
-        let inline fd(a) = log a
+        let inline fd(a) = D.Log a
         let inline df(cp, ap, at) = at / ap
         let inline r(a) = Log_D(a)
         D.Op_D_D (a, ff, fd, df, r)
 
     static member Log10 (a:D) =
         let inline ff(a) = log10 a
-        let inline fd(a) = log10 a
+        let inline fd(a) = D.Log10 a
         let inline df(cp, ap:D, at) = at / (ap * N.log10Val)
         let inline r(a) = Log10_D(a)
         D.Op_D_D (a, ff, fd, df, r)
 
     static member Exp (a:D) =
         let inline ff(a) = exp a
-        let inline fd(a) = exp a
+        let inline fd(a) = D.Exp a
         let inline df(cp:D, ap:D, at:D) = at * cp // cp = exp ap
         let inline r(a) = Exp_D(a)
         D.Op_D_D (a, ff, fd, df, r)
 
     static member Sin (a:D) =
         let inline ff(a) = sin a
-        let inline fd(a) = sin a
+        let inline fd(a) = D.Sin a
         let inline df(cp:D, ap:D, at:D) = at * cos ap
         let inline r(a) = Sin_D(a)
         D.Op_D_D (a, ff, fd, df, r)
 
     static member Cos (a:D) =
         let inline ff(a) = cos a
-        let inline fd(a) = cos a
+        let inline fd(a) = D.Cos a
         let inline df(cp:D, ap:D, at:D) = -at * sin ap
         let inline r(a) = Cos_D(a)
         D.Op_D_D (a, ff, fd, df, r)
 
     static member Tan (a:D) =
         let inline ff(a) = tan a
-        let inline fd(a) = tan a
+        let inline fd(a) = D.Tan a
         let inline df(cp:D, ap:D, at:D) = let cosa = cos ap in at / (cosa * cosa)
         let inline r(a) = Tan_D(a)
         D.Op_D_D (a, ff, fd, df, r)
@@ -351,7 +351,7 @@ type D =
 
     static member Sqrt (a:D) =
         let inline ff(a) = sqrt a
-        let inline fd(a) = sqrt a
+        let inline fd(a) = D.Sqrt a
         let inline df(cp, ap, at) = at / ((D N.two) * cp) // cp = sqrt ap
         let inline r(a) = Sqrt_D(a)
         D.Op_D_D (a, ff, fd, df, r)
@@ -1210,7 +1210,7 @@ and DV =
 
     static member Log (a:DV) =
         let inline ff(a) = Backend.Map_F_V(log, a)
-        let inline fd(a) = log a
+        let inline fd(a) = DV.Log a
         let inline df(cp: DV, ap: DV, at: DV) = at ./ ap
         let inline r(a) = Log_DV(a)
         DV.Op_DV_DV (a, ff, fd, df, r)
@@ -1231,14 +1231,14 @@ and DV =
 
     static member Sin (a:DV) =
         let inline ff(a) = Backend.Map_F_V(sin, a)
-        let inline fd(a) = sin a
+        let inline fd(a) = DV.Sin a
         let inline df(cp: DV, ap:DV, at:DV) = at .* cos ap
         let inline r(a) = Sin_DV(a)
         DV.Op_DV_DV (a, ff, fd, df, r)
 
     static member Cos (a:DV) =
         let inline ff(a) = Backend.Map_F_V(cos, a)
-        let inline fd(a) = cos a
+        let inline fd(a) = DV.Cos a
         let inline df(cp: DV, ap:DV, at:DV) = -at .* sin ap
         let inline r(a) = Cos_DV(a)
         DV.Op_DV_DV (a, ff, fd, df, r)
