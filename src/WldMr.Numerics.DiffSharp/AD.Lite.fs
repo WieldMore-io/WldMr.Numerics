@@ -295,7 +295,7 @@ type D =
     static member Log (a:D) =
         let inline ff(a) = log a
         let inline fd(a) = D.Log a
-        let inline df(cp, ap, at) = at / ap
+        let inline df(cp, ap: D, at: D) = at / ap
         let inline r(a) = Log_D(a)
         D.Op_D_D (a, ff, fd, df, r)
 
@@ -345,21 +345,21 @@ type D =
     static member (~-) (a:D) =
         let inline ff(a) = -a
         let inline fd(a: D) = D.(~-) a
-        let inline df(cp, ap, at) = -at
+        let inline df(cp, ap, at: D) = -at
         let inline r(a) = Neg_D(a)
         D.Op_D_D (a, ff, fd, df, r)
 
     static member Sqrt (a:D) =
         let inline ff(a) = sqrt a
         let inline fd(a) = D.Sqrt a
-        let inline df(cp, ap, at) = at / ((D N.two) * cp) // cp = sqrt ap
+        let inline df(cp: D, ap, at: D) = at / ((D N.two) * cp) // cp = sqrt ap
         let inline r(a) = Sqrt_D(a)
         D.Op_D_D (a, ff, fd, df, r)
 
     static member Sinh (a:D) =
         let inline ff(a) = sinh a
         let inline fd(a) = sinh a
-        let inline df(cp, ap, at) = at * cosh ap
+        let inline df(cp, ap: D, at: D) = at * cosh ap
         let inline r(a) = Sinh_D(a)
         D.Op_D_D (a, ff, fd, df, r)
 
