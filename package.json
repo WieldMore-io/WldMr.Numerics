@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "watch": "dotnet fable watch tests/ExpectoTests -o js-build/tests/ExpectoTests -e .fs.js --runWatch mocha js-build/tests/ExpectoTests/Main.fs.js",
+    "pretest": "dotnet fable tests/ExpectoTests -o js-build/tests/ExpectoTests -e .fs.js ",
+    "test": "mocha js-build/tests/ExpectoTests/Main.fs.js"
+  },
+  "devDependencies": {
+    "mocha": "^10.2.0"
+  }
+}

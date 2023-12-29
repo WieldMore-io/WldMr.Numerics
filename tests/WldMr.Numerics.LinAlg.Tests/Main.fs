@@ -14,4 +14,4 @@ let main argv =
 //        fsCheckMaxTests = 10000
     }
 
-  Tests.runTestsInAssembly config argv
+  Tests.runTestsInAssemblyWithCLIArgs [] argv

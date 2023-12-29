@@ -27,12 +27,18 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "_configfiles", "_configfile
 		paket.lock = paket.lock
 		README.md = README.md
 		.editorconfig = .editorconfig
+		package.json = package.json
+		TestPython.ps1 = TestPython.ps1
+		WatchPython.ps1 = WatchPython.ps1
+		package-lock.json = package-lock.json
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".config", ".config", "{04FDD5D4-739E-4627-87C5-6711178E5A5F}"
 	ProjectSection(SolutionItems) = preProject
 		.config\dotnet-tools.json = .config\dotnet-tools.json
 	EndProjectSection
+EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "ExpectoTests", "tests\ExpectoTests\ExpectoTests.fsproj", "{C95A5F72-2F81-442B-B492-099CF6AF9A4C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -59,6 +65,10 @@ Global
 		{4ECAAFDC-896E-4EF2-8889-F9483B049B4F}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4ECAAFDC-896E-4EF2-8889-F9483B049B4F}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{4ECAAFDC-896E-4EF2-8889-F9483B049B4F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C95A5F72-2F81-442B-B492-099CF6AF9A4C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C95A5F72-2F81-442B-B492-099CF6AF9A4C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C95A5F72-2F81-442B-B492-099CF6AF9A4C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C95A5F72-2F81-442B-B492-099CF6AF9A4C}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{68B49E51-04B4-40E0-8690-AD0B7A9E4B35} = {5D3C1FA3-74D5-42B2-B1C3-841B7491C5B4}
@@ -66,5 +76,6 @@ Global
 		{915D2EFB-CCD6-4BF7-AA91-5FEDE2FAB712} = {E6E182B2-44F9-4E2B-96F8-61CD08827449}
 		{4ECAAFDC-896E-4EF2-8889-F9483B049B4F} = {E6E182B2-44F9-4E2B-96F8-61CD08827449}
 		{04FDD5D4-739E-4627-87C5-6711178E5A5F} = {59BA6FC6-C203-4243-A299-CC71D4EFDC9B}
+		{C95A5F72-2F81-442B-B492-099CF6AF9A4C} = {E6E182B2-44F9-4E2B-96F8-61CD08827449}
 	EndGlobalSection
 EndGlobal

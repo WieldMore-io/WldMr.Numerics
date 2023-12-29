@@ -30,6 +30,7 @@
   <ItemGroup>
     <!-- Do not remove the next line -->
     <!-- LocalWldMrDependencies -->
+    <PackageReference Condition="'$(FABLE_COMPILER_JAVASCRIPT)' == 'true'" Include="Fable.Mocha" Version="2.15.0" />
   </ItemGroup>
 
   <Import Project="..\..\.paket\Paket.Restore.targets" />
