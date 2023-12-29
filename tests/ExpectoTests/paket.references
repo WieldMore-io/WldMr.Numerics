@@ -1,4 +1,7 @@
 FSharp.Core
-Expecto.FsCheck
+Expecto
 Microsoft.NET.Test.Sdk
 YoloDev.Expecto.TestSdk
+// Fable.Mocha
+Fable.Node
+Fable.Pyxpecto

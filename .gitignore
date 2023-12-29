@@ -18,6 +18,8 @@ src/*/Scratch/
 .idea/
 
 node_modules/
+js-build/
+py-build/
 
 *.DotSettings.user
 
