@@ -12,8 +12,8 @@ pool:
 
 
 variables:
-  major: 0
-  minor: 9
+  major: 1
+  minor: 0
   buildConfiguration: 'Release'
   NUGET_PACKAGES: $(Pipeline.Workspace)/.nuget/packages
   isNotaPR: $[ne(variables['Build.Reason'], 'PullRequest')]
