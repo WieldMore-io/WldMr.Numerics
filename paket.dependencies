@@ -1,10 +1,10 @@
 source https://api.nuget.org/v3/index.json
 
 storage: none
-framework: netstandard2.0, net6.0
+framework: netstandard2.0, net8.0
 
 nuget Fable.Pyxpecto
-nuget FSharp.Core
+nuget FSharp.Core ~> 8
 
 nuget System.Memory
 
@@ -23,7 +23,6 @@ nuget YoloDev.Expecto.TestSdk
 nuget Microsoft.NET.Test.Sdk
 
 nuget Expecto.VisualStudio.TestAdapter
-nuget YoloDev.Expecto.TestSdk
 nuget coverlet.collector
 
 nuget Expecto.FsCheck
@@ -32,7 +31,7 @@ nuget FsCheck.NUnit
 nuget NUnit3TestAdapter
 
 nuget Fable.Mocha
-nuget Fable.Core
+nuget Fable.Core = 4.2.0
 nuget Fable.Node
 
 nuget DotNet.ReproducibleBuilds copy_local: true

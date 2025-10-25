@@ -1,8 +1,3 @@
-# ASP.NET Core (.NET Framework)
-# Build and test ASP.NET Core projects targeting the full .NET Framework.
-# Add steps that publish symbols, save build artifacts, and more:
-# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
-
 trigger:
 - '*'
 
@@ -13,7 +8,7 @@ pool:
 
 variables:
   major: 1
-  minor: 0
+  minor: 3
   buildConfiguration: 'Release'
   NUGET_PACKAGES: $(Pipeline.Workspace)/.nuget/packages
   isNotaPR: $[ne(variables['Build.Reason'], 'PullRequest')]
@@ -47,6 +42,7 @@ steps:
 #       paket | CommonDataLogic_v1 | "$(Agent.OS)" | paket.lock
 #     path: $(NUGET_PACKAGES)
 #   displayName: Cache NuGet/Paket packages
+
 - task: DotNetCoreCLI@2
   displayName: 'dotnet --info'
   inputs:
@@ -67,27 +63,16 @@ steps:
     custom: paket
     arguments: 'restore'
 
-#- task: Npm@1
-#  displayName: 'npm install'
-#  inputs:
-#    command: 'install'
-#    workingDir: '$(Build.SourcesDirectory)/tests/MochaTests'
-#
-#- task: Npm@1
-#  displayName: 'npm run test'
-#  inputs:
-#    command: 'custom'
-#    workingDir: '$(Build.SourcesDirectory)/tests/MochaTests'
-#    customCommand: 'run test'
+- task: Npm@1
+  displayName: 'npm install'
+  inputs:
+    command: 'install'
 
-# - task: DotNetCoreCLI@2
-#   displayName: 'dotnet build -c $(buildConfiguration)'
-#   inputs:
-#     command: 'build'
-#     arguments: >-
-#       -p:Version=$(packageVersion) -p:InformationalVersion=$(packageVersion)-$(Build.SourceVersion) 
-#       --configuration $(buildConfiguration)
-
+- task: Npm@1
+  displayName: 'npm run test'
+  inputs:
+    command: 'custom'
+    customCommand: 'run test'
 
 - task: DotNetCoreCLI@2
   displayName: 'dotnet test -c $(buildConfiguration)'
