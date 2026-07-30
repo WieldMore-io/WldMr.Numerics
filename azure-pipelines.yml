@@ -115,9 +115,11 @@ steps:
     tag: $(packageVersion)
 
 
+# PR builds publish too: a -pr package on the internal feed is what lets a
+# downstream repo verify against this change before it merges.
 - task: DotNetCoreCLI@2
   displayName: 'dotnet push ▶ Azure artifacts'
-  condition: and(succeeded(), eq(variables.isNotaPR, true), eq(variables['Build.Repository.Uri'], 'https://github.com/WieldMore-io/WldMr.Numerics'))
+  condition: and(succeeded(), eq(variables['Build.Repository.Uri'], 'https://github.com/WieldMore-io/WldMr.Numerics'))
   inputs:
     command: 'push'
     packagesToPush: '$(Build.ArtifactStagingDirectory)/*.nupkg'
