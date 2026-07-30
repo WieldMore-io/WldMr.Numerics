@@ -12,25 +12,26 @@ variables:
   buildConfiguration: 'Release'
   NUGET_PACKAGES: $(Pipeline.Workspace)/.nuget/packages
   isNotaPR: $[ne(variables['Build.Reason'], 'PullRequest')]
+  # One counter for every channel, keyed on major.minor - the master counter's existing
+  # key, so the sequence continues without a seed. A shared counter means a PR
+  # 1.3.7-pr.12.3456 and a release 1.3.8 can never carry the same patch number, so
+  # AssemblyVersion (which drops the suffix) cannot collide across channels either.
+  # The suffix still names the channel; PR versions also name their PR and build.
+  patch: $[counter(format('{0}.{1}', variables['Major'], variables['Minor']), 0)]
   ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
-    versionSuffix: '-PR'
-    patch: $[counter(format('{0}.{1}.{2}', variables['Major'], variables['Minor'], variables['versionSuffix']), 0)]
-    packageVersion: $[format('{0}.{1}.{2}-PR', variables['major'], variables['minor'], variables['patch']) ]
+    packageVersion: $[format('{0}.{1}.{2}-pr.{3}.{4}', variables['major'], variables['minor'], variables['patch'], variables['System.PullRequest.PullRequestNumber'], variables['Build.BuildId'])]
     buildName: $[ format('PR {0}', variables['packageVersion']) ]
   ${{ if ne(variables['Build.Reason'], 'PullRequest') }}:
     ${{ if eq(variables['Build.SourceBranchName'], 'master') }}:
       # full release
-      patch: $[counter(format('{0}.{1}', variables['Major'], variables['Minor']), 0)]
       packageVersion: $[format('{0}.{1}.{2}', variables['major'], variables['minor'], variables['patch']) ]
-      buildName: $[ format('🚀 Release {0}', variables['packageVersion']) ]      
+      buildName: $[ format('🚀 Release {0}', variables['packageVersion']) ]
 
     ${{ if ne(variables['Build.SourceBranchName'], 'master') }}:
       # a branch
-      patch: $[counter(format('{0}.{1}.{2} branch', variables['Major'], variables['Minor'], variables['Build.SourceBranchName']), 0)]
       packageVersion: $[format('{0}.{1}.{2}-branch', variables['major'], variables['minor'], variables['patch']) ]
       buildName: $[ format('Branch {0} -- {1}', variables['Build.SourceBranchName'], variables['patch']) ]
-  # packageVersion: $(major).$(minor).$(versionSuffix)$(patch)
-    
+
 
 name: $(buildName)
 
