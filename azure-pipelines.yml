@@ -21,16 +21,14 @@ variables:
   ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
     packageVersion: $[format('{0}.{1}.{2}-pr.{3}.{4}', variables['major'], variables['minor'], variables['patch'], variables['System.PullRequest.PullRequestNumber'], variables['Build.BuildId'])]
     buildName: $[ format('PR {0}', variables['packageVersion']) ]
-  ${{ if ne(variables['Build.Reason'], 'PullRequest') }}:
-    ${{ if eq(variables['Build.SourceBranchName'], 'master') }}:
-      # full release
-      packageVersion: $[format('{0}.{1}.{2}', variables['major'], variables['minor'], variables['patch']) ]
-      buildName: $[ format('🚀 Release {0}', variables['packageVersion']) ]
-
-    ${{ if ne(variables['Build.SourceBranchName'], 'master') }}:
-      # a branch
-      packageVersion: $[format('{0}.{1}.{2}-branch', variables['major'], variables['minor'], variables['patch']) ]
-      buildName: $[ format('Branch {0} -- {1}', variables['Build.SourceBranchName'], variables['patch']) ]
+  ${{ elseif eq(variables['Build.SourceBranchName'], 'master') }}:
+    # full release
+    packageVersion: $[format('{0}.{1}.{2}', variables['major'], variables['minor'], variables['patch']) ]
+    buildName: $[ format('🚀 Release {0}', variables['packageVersion']) ]
+  ${{ else }}:
+    # a branch
+    packageVersion: $[format('{0}.{1}.{2}-branch', variables['major'], variables['minor'], variables['patch']) ]
+    buildName: $[ format('Branch {0} -- {1}', variables['Build.SourceBranchName'], variables['patch']) ]
 
 
 name: $(buildName)
