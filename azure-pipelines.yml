@@ -1,5 +1,9 @@
+# CI on master only; PRs are covered by the default PR validation trigger.
+# With '*', every PR queued two builds of the same code (branch push + PR
+# validation), and the branch build published a -branch package nothing
+# consumes. Same reasoning as WldMr.Web's pipeline.
 trigger:
-- '*'
+- master
 
 pool:
   name: Azure Pipelines
