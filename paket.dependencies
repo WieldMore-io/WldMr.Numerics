@@ -4,9 +4,9 @@ storage: none
 framework: netstandard2.0, net8.0
 
 nuget Fable.Pyxpecto
-nuget FSharp.Core ~> 8
+nuget FSharp.Core ~> 9
 
-nuget System.Memory
+nuget System.Memory ~> 4.5.5
 
 nuget FsToolkit.ErrorHandling >= 4
 
@@ -31,7 +31,7 @@ nuget FsCheck.NUnit
 nuget NUnit3TestAdapter
 
 nuget Fable.Mocha
-nuget Fable.Core = 4.2.0
+nuget Fable.Core ~> 4.5.0
 nuget Fable.Node
 
 nuget DotNet.ReproducibleBuilds copy_local: true
