@@ -105,13 +105,13 @@ steps:
     artifactName: 'nuget package'
 
 
-- task: GithubRelease@0
+- task: GithubRelease@1
   displayName: 'Create GitHub Release'
   condition: and(succeeded(), eq(variables.isNotaPR, true), eq(variables['Build.Repository.Uri'], 'https://github.com/WieldMore-io/WldMr.Numerics'))
   inputs:
     gitHubConnection: github.com_PierreYvesR
     repositoryName: WieldMore-io/WldMr.Numerics
-    tagSource: manual
+    tagSource: userSpecifiedTag # was `manual` - renamed in @1
     addChangeLog: false
     #isPreRelease: true
     tag: $(packageVersion)
