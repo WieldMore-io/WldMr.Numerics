@@ -24,6 +24,7 @@ py-build/
 *.DotSettings.user
 
 consoles/Benchmark/BenchmarkDotNet.Artifacts
+consoles/*/BenchmarkDotNet.Artifacts/
 
 # emacs
 .#*
