@@ -53,17 +53,19 @@ let tests =
     testCase "DM adjoint survives a later reverse pass over the same node" <| fun _ ->
       let m = DM (Mat.ofRowsArray [| [| 1.0; 2.0 |]; [| 3.0; 4.0 |] |] |> ColMajor)
       let ma = m |> makeReverse (nextTag ())
-      let pass () =
+      // A different seed per pass: with an in-place push, a same-seed rerun refills
+      // an aliased buffer with identical values and the aliasing reads as green.
+      let pass (seed: D) =
         let z = DM.Sum(ma .* ma)
-        z |> reverseProp D.One
+        z |> reverseProp seed
         ma |> adjoint
-      let g1 = pass ()
-      let g2 = pass ()
-      // d(sum(M .* M))/dM = 2M
+      let g1 = pass D.One
+      let g2 = pass (D 3.0)
+      // d(s * sum(M .* M))/dM = 2sM
       g1.[0, 0] |> Expect.dfloatClose "first pass [0,0], read after the second ran" accuracy 2.0
       g1.[1, 1] |> Expect.dfloatClose "first pass [1,1], read after the second ran" accuracy 8.0
-      g2.[0, 0] |> Expect.dfloatClose "second pass [0,0]" accuracy 2.0
-      g2.[1, 1] |> Expect.dfloatClose "second pass [1,1]" accuracy 8.0
+      g2.[0, 0] |> Expect.dfloatClose "second pass [0,0]" accuracy 6.0
+      g2.[1, 1] |> Expect.dfloatClose "second pass [1,1]" accuracy 24.0
 
     testCase "jacobianTv'' reverse evaluator keeps earlier seeds intact" <| fun _ ->
       // A strict special case of the first test, through the public DiffOps surface.
