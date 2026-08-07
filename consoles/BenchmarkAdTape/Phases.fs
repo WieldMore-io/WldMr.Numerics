@@ -52,31 +52,37 @@ let census (spec: Graph.GraphSpec) =
   printfn "  gradient              length=%d  min=%.6g  max=%.6g"
     ga.Length (Array.min ga) (Array.max ga)
 
-/// One tape, three measurements: the forward pass, one full `reverseProp`, then
-/// one bare `reverseReset`.
+/// One tape, four measurements: the forward pass, the *first* `reverseProp`
+/// (which materialises the lazily-seeded adjoint buffers — `DV.R` starts every
+/// ref on the empty sentinel), a second steady-state `reverseProp` (buffers in
+/// place, reset reuses them), then one bare `reverseReset`.
 ///
 /// **The order is not arbitrary.** A tape is pushable only while every fan-out
-/// counter is zero, which holds when it is fresh and again after a complete push
-/// (`pushRec` decrements each counter back to 0). A bare `reverseReset` leaves
-/// the counters at each node's in-degree instead, and a *second* reset then
-/// finds them non-zero, declines to recurse (`AD.Lite.fs:3430`) and touches only
-/// the root — so a reset measured before the push would both mis-measure itself
-/// and silently disarm the push that followed. Hence: forward, push, reset,
-/// throw the tape away.
+/// counter is zero, which holds when it is fresh and again after each complete
+/// push (`pushRec` decrements each counter back to 0) — so both pushes are
+/// legal, and the trailing bare reset measures steady state because the pushes
+/// before it materialised every buffer. A bare `reverseReset` leaves the
+/// counters at each node's in-degree instead, and a *second* reset then finds
+/// them non-zero, declines to recurse (`AD.Lite.fs:3430`) and touches only the
+/// root — so a reset measured before the pushes would both mis-measure itself
+/// and silently disarm the push that followed. Hence: forward, push, push,
+/// reset, throw the tape away.
 let private measureOnce (fx: Graph.Fixture) =
   let a0 = alloc ()
   let root, x = Graph.forward fx
   let a1 = alloc ()
   push root
   let a2 = alloc ()
+  push root
+  let a3 = alloc ()
   // Checked here, between the push and the reset: the gradient is live only in
   // this window, since the bare reset below is about to erase it. Its own
   // allocation is excluded by restarting the counter afterwards.
   guard root (x |> adjoint)
-  let a3 = alloc ()
-  reset root
   let a4 = alloc ()
-  a1 - a0, a2 - a1, a4 - a3
+  reset root
+  let a5 = alloc ()
+  a1 - a0, a2 - a1, a3 - a2, a5 - a4
 
 /// Allocated bytes for (a) the forward evaluation that builds the tape,
 /// (b) the reset, and (c) the push — with (c) derived, not measured.
@@ -86,23 +92,30 @@ let private measureOnce (fx: Graph.Fixture) =
 /// (`AD.Lite.fs:3648`) and `reverseProp` calls `reverseReset` before it
 /// (`AD.Lite.fs:3997`), so the only public push includes a reset. (c) is
 /// therefore `reverseProp` minus the bare reset, and is labelled derived.
+///
+/// (b) and (c) are steady state. The first `reverseProp` on a fresh tape
+/// additionally materialises the lazy adjoint buffers (`DV.R` seeds every ref
+/// with the empty sentinel) and is reported as its own row — deriving push
+/// from it would wrongly charge the materialisation to the push.
 let phases (spec: Graph.GraphSpec) (reps: int) =
   let fx = Graph.build spec
   measureOnce fx |> ignore // warm: JIT, the DiffSharp statics, the tagger
 
   let mutable fwd = 0L
+  let mutable fp = 0L
   let mutable rp = 0L
   let mutable rst = 0L
   let sw = Stopwatch.StartNew()
   for _ in 1 .. reps do
-    let f, p, r = measureOnce fx
+    let f, p1, p, r = measureOnce fx
     fwd <- fwd + f
+    fp <- fp + p1
     rp <- rp + p
     rst <- rst + r
   sw.Stop()
 
   let n = float reps
-  let fwd, rp, rst = float fwd / n, float rp / n, float rst / n
+  let fwd, fp, rp, rst = float fwd / n, float fp / n, float rp / n, float rst / n
   let nodes = float (Graph.nodeCount spec)
   let slots = Graph.adjointSlots spec
   let floorBytes = float slots * 8.0
@@ -114,8 +127,9 @@ let phases (spec: Graph.GraphSpec) (reps: int) =
     printfn "  %-28s %12.0f %12.1f %12.2f" label bytes (bytes / nodes) (bytes / float slots)
   row "(a) forward, builds tape" fwd
   row "(b) reset      [measured]" rst
-  row "(a)+(b)+(c) reverseProp" rp
+  row "(b)+(c) reverseProp, steady" rp
   row "(c) push       [derived]" (rp - rst)
+  row "first pass (materialises)" fp
   printfn "  ---"
   printfn "  zero-vector floor         %12.0f B  (%d slots x 8 B)" floorBytes slots
   printfn "  reset / floor             %12.2f x" (rst / floorBytes)
@@ -138,7 +152,7 @@ let sweep (varying: string) (label: Graph.GraphSpec -> string) (specs: Graph.Gra
     let mutable rp = 0L
     let mutable rst = 0L
     for _ in 1 .. reps do
-      let f, p, r = measureOnce fx
+      let f, _, p, r = measureOnce fx
       fwd <- fwd + f
       rp <- rp + p
       rst <- rst + r
@@ -194,24 +208,30 @@ let seedPasses (spec: Graph.GraphSpec) (reps: int) =
   guard warmRoot (warmX |> adjoint)
 
   let mutable fwd = 0L
-  let mutable passes = 0L
+  let mutable first = 0L
+  let mutable rest = 0L
   for _ in 1 .. reps do
     let a0 = alloc ()
     let root, x = Graph.forward fx
     let a1 = alloc ()
-    for _ in 1 .. Graph.SeedPasses do
-      push root
+    // Pass 1 materialises the lazily-seeded adjoint buffers; the rest reuse them.
+    push root
     let a2 = alloc ()
+    for _ in 2 .. Graph.SeedPasses do
+      push root
+    let a3 = alloc ()
     guard root (x |> adjoint)
     fwd <- fwd + (a1 - a0)
-    passes <- passes + (a2 - a1)
+    first <- first + (a2 - a1)
+    rest <- rest + (a3 - a2)
 
   let n = float reps
-  let fwd, passes = float fwd / n, float passes / n
+  let fwd, first, rest = float fwd / n, float first / n, float rest / n
   printfn "seeds   depth=%d, %d reverse passes over one tape, %d reps"
     spec.Depth Graph.SeedPasses reps
   printfn "  forward (once)            %12.0f B" fwd
-  printfn "  %d reverse passes          %12.0f B  (%.0f B each)"
-    Graph.SeedPasses passes (passes / float Graph.SeedPasses)
+  printfn "  first pass (materialises) %12.0f B" first
+  printfn "  %d further passes          %12.0f B  (%.0f B each)"
+    (Graph.SeedPasses - 1) rest (rest / float (Graph.SeedPasses - 1))
   printfn "  total                     %12.0f B  (%.1f%% of it reverse)"
-    (fwd + passes) (100.0 * passes / (fwd + passes))
+    (fwd + first + rest) (100.0 * (first + rest) / (fwd + first + rest))

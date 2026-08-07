@@ -78,6 +78,36 @@ let tests =
       row1.[0] |> Expect.floatClose "seed 1 [0]" accuracy 1.0
       row1.[1] |> Expect.floatClose "seed 1 [1]" accuracy 1.0
 
+    testCase "a node's adjoint is lazy — empty until a reverse pass materialises it" <| fun _ ->
+      // `DV.R`/`DM.R` seed the adjoint ref with the shared empty sentinel; the
+      // full-length buffer only exists once `reverseReset`'s shape-mismatch arm
+      // has run. The passing push below is the invariant that keeps
+      // `Add_V_V_Inplace`'s empty-destination error path unreachable: reset runs
+      // before every push, so buffers are full-length by push time.
+      let xa = DV [| 3.0; 5.0 |] |> makeReverse (nextTag ())
+      let z = xa.[0] * xa.[1]
+      (xa |> adjoint |> DV.toFloats).Length |> Expect.equal "adjoint before any pass is the empty sentinel" 0
+      z |> reverseProp D.One
+      let g = xa |> adjoint |> DV.toFloats
+      g.Length |> Expect.equal "materialised to primal length by the pass" 2
+      g.[0] |> Expect.floatClose "d(x*y)/dx" accuracy 5.0
+      g.[1] |> Expect.floatClose "d(x*y)/dy" accuracy 3.0
+
+    testCase "nested forward-over-reverse works over lazy adjoints" <| fun _ ->
+      // Forward-on-reverse — the shape that puts DVF duals into adjoint refs
+      // (constraint 5) — built as Hessian-vector products via the forward
+      // directional derivative of the reverse-mode gradient. Deliberately not
+      // `gradhessian`, whose DM assembly is `failwith` under Fable; this form
+      // runs on all three targets.
+      let f (v: DV) = v.[0] * v.[1] * v.[1]
+      let x = DV [| 3.0; 5.0 |]
+      let hcol0 = jacobianv (grad f) x (DV [| 1.0; 0.0 |]) |> DV.toFloats
+      let hcol1 = jacobianv (grad f) x (DV [| 0.0; 1.0 |]) |> DV.toFloats
+      hcol0.[0] |> Expect.floatClose "H[0,0] = 0" accuracy 0.0
+      hcol0.[1] |> Expect.floatClose "H[1,0] = 2y" accuracy 10.0
+      hcol1.[0] |> Expect.floatClose "H[0,1] = 2y" accuracy 10.0
+      hcol1.[1] |> Expect.floatClose "H[1,1] = 2x" accuracy 6.0
+
     testCase "an extra reverseReset disarms the push that follows (known trap)" <| fun _ ->
       // resetRec bumps each node's fan-out counter and recurses only when it hits
       // exactly 1, so a second reset with no push in between walks the root alone and
