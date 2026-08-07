@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- The repo's default target. Deliberately no RuntimeMoniker / SimpleJob
+         anywhere in this project: benchmarks pinned to an old framework stop
+         being runnable once that framework is gone. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <Configurations>Debug;Release</Configurations>
+    <IsPackable>false</IsPackable>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="paket.references" />
+    <Compile Include="Graph.fs" />
+    <Compile Include="Phases.fs" />
+    <Compile Include="Benchmarks.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\WldMr.Numerics.LinAlg\WldMr.Numerics.LinAlg.fsproj" />
+    <ProjectReference Include="..\..\src\WldMr.Numerics.DiffSharp\WldMr.Numerics.DiffSharp.fsproj" />
+  </ItemGroup>
+  <Import Project="..\..\.paket\Paket.Restore.targets" />
+</Project>

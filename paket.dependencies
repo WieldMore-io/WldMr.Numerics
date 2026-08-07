@@ -35,3 +35,11 @@ nuget Fable.Core ~> 4.5.0
 nuget Fable.Node
 
 nuget DotNet.ReproducibleBuilds copy_local: true
+
+// for benchmarks
+nuget BenchmarkDotNet
+// Perfolizer 0.6.1 (pinned by BenchmarkDotNet) asks for Pragmastat >= 3.2.4, but
+// its MeasurementUnit constructor was changed in Pragmastat 13. Resolving the
+// latest gives a MissingMethodException in TimeUnit's static constructor before
+// a single benchmark runs, so keep Pragmastat on the 3.x line.
+nuget Pragmastat ~> 3.2
