@@ -24,9 +24,14 @@ open WldMr.Numerics.DiffSharp.AD.Float64
 /// - (a) forward             = `Forward`
 /// - (b) reset               = `ForwardAndReset` - `Forward`
 /// - (c) push                = `ForwardResetAndPush` - `ForwardAndReset`
-/// - (b)+(c) cross-check     = `ReversePassOnPrebuiltTape`, which should equal
-///   `ForwardResetAndPush` - `Forward`. If it does not, the subtraction is
-///   measuring something other than the phases.
+/// - (b)+(c) steady state    = `ReversePassOnPrebuiltTape`
+///
+/// Since adjoints became lazy (`DV.R` seeds every ref with the empty sentinel),
+/// the subtractions measure the *first* pass on a fresh tape, whose reset
+/// materialises every adjoint buffer — so `ForwardResetAndPush` - `Forward`
+/// exceeds `ReversePassOnPrebuiltTape` by exactly that materialisation cost
+/// (the old cross-check equality). The prebuilt tape was warmed by a full pass
+/// in `Setup`, so its row is the steady state, matching `-- phases`.
 ///
 /// There is deliberately no bare-reset benchmark on a prebuilt tape. It would be
 /// wrong: `resetRec` increments each node's fan-out counter and only recurses
@@ -66,9 +71,9 @@ type AdTapeBenchmark() =
 
   /// (a) alone: the forward evaluation that builds the tape, no reverse pass.
   ///
-  /// Not free of adjoint allocation — `DV.R` gives every node a fresh
-  /// `DV.ZeroN` at construction (`AD.Lite.fs:576`), so the zero vector a reset
-  /// later rewrites has already been allocated once, here.
+  /// Free of adjoint payload allocation since `DV.R` seeds each ref with the
+  /// shared empty sentinel; the full-length buffers are materialised by the
+  /// first reverse pass instead (`ForwardAndReset` pays them here).
   [<Benchmark(Baseline = true)>]
   member _.Forward() = Graph.forward fixture
 

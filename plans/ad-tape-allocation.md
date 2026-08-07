@@ -1,8 +1,9 @@
 # Reverse-mode AD allocates ~2.5x what it needs to
 
 **Status: steps 1 and 2 landed 2026-08-07 (PR #18); step 4 followed the same
-day — see the step-4 section at the end. Step 3 is next, minding the
-empty-destination interaction described there.**
+day — see the step-4 section at the end. Step 3 is done as option (d) of
+`ad-allocation-redesign.md`, which now carries the direction; next is the
+gather op (`ad-gather.md`).**
 
 History: diagnosed 2026-08-05 with a harness (`consoles/BenchmarkAdTape`) and
 the cause confirmed at three specific lines. Step 1, the `adjoint`/`.A` consumer
@@ -252,12 +253,12 @@ is a plain `DV` (and, for push, `v` too), falling back to allocation otherwise.
    (`:3346`) returning a copy for exactly the same case split, in the same
    commit. Reset allocation went 115,656 → 2,136 B/pass and is now flat in
    vector width. Cross-runtime tests in `tests/ExpectoTests/AdjointLifetimeTests.fs`.
-3. **`:576`** — if reset reuses buffers, question whether construction needs to
-   allocate one eagerly at all. Mind the interaction with step 4: a non-empty
-   contribution accumulated into an empty sentinel adjoint is
-   `Backend.Add_V_V_Inplace`'s error path. Reset runs before every push
-   (`:3996`), so "buffers are full-length by push time" holds — keep that
-   invariant explicit.
+3. ~~**`:576`**~~ — **done 2026-08-07** as option (d) of
+   `ad-allocation-redesign.md`: `DV.R`/`DM.R` seed the adjoint ref with a shared
+   empty sentinel and reset's shape-mismatch arm materialises on first visit.
+   The "buffers are full-length by push time" invariant is pinned by a test, and
+   the harness's phases/seeds modes now report the first pass separately.
+   Measured outcome in the redesign note.
 4. ~~**`:3746`** — in-place adjoint accumulation.~~ — **done 2026-08-07.** The
    `DV` and `DM` central accumulates now go through the previously dormant
    `Add_V_V_Inplace`/`Add_M_M_Inplace`; push went 227,432 → 115,472 B/pass

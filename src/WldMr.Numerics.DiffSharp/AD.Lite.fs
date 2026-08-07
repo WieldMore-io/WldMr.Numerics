@@ -573,7 +573,10 @@ and DV =
     member d.GetReverse(i:uint32) = DV.R(d, Noop, i)
 
     /// Make a reverse node
-    static member R(d, op, ai) = DVR(d, ref (DV.ZeroN d.Length), op, ref 0u, ai)
+    // The adjoint starts as the shared empty sentinel rather than an eager
+    // full-length zero vector: `reverseReset` runs before every push and its
+    // shape-mismatch arm materialises the buffer on the node's first reset.
+    static member R(d, op, ai) = DVR(d, ref DV.ZeroSentinel, op, ref 0u, ai)
 
     member d.Length =
         match d with
@@ -644,6 +647,10 @@ and DV =
         sb.ToString()
 
     static member Zero = DV Array.empty
+    // One shared instance can seed every reverse node's adjoint: it is never
+    // mutated, because reset's in-place clear fires only on a length match —
+    // which for the sentinel means an empty primal and a no-op clear.
+    static member val internal ZeroSentinel = DV Array.empty
 
     static member ZeroN n = DV(Array.zeroCreate n)
 
@@ -1566,7 +1573,9 @@ and DM =
     member d.GetReverse(i:uint32) = DM.R(d, Noop, i)
 
     /// Make a reverse node
-    static member R(cp, op, ai) = DMR(cp, ref (DM.ZeroMN cp.Rows cp.Cols), op, ref 0u, ai)
+    // As for `DV.R`: the empty sentinel, materialised by reset's shape-mismatch
+    // arm on the node's first reset.
+    static member R(cp, op, ai) = DMR(cp, ref DM.ZeroSentinel, op, ref 0u, ai)
 
     member d.Length =
         match d with
@@ -1665,6 +1674,8 @@ and DM =
         sb.ToString()
 
     static member Zero = GenMat.empty |> DM
+    // See `DV.ZeroSentinel`; `GenMat.empty` is itself a shared module value.
+    static member val internal ZeroSentinel = GenMat.empty |> DM
 
     static member ZeroMN m n = DM (Mat.zeroCreate m n |> ColMajor)
 
