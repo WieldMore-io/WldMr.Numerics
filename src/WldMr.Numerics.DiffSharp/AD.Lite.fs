@@ -3780,7 +3780,11 @@ module DOps =
                     match d with
                     | DVR(_, dARef, o, dFanOutRef, _) ->
                         dFanOutRef.Value <- dFanOutRef.Value - 1u
-                        dARef.Value <- dARef.Value + v
+                        // Accumulate into the buffer reset left in place instead of allocating
+                        // a fresh vector per contribution. `Add_V_V_Inplace` is destructive of
+                        // its *second* argument and shares `(+)`'s dispatch otherwise, so the
+                        // nested-AD cases (`DVF`/`DVR` on either side) still allocate as before.
+                        dARef.Value <- DV.Add_V_V_Inplace(v, dARef.Value)
                         let dA = dARef.Value
                         // If all incoming parts of the adjoint have been received, then proceed to the children
                         if dFanOutRef.Value = 0u then
@@ -3902,7 +3906,10 @@ module DOps =
                     match d with
                     | DMR(_, dARef, o, dFanOutRef, _) ->
                         dFanOutRef.Value <- dFanOutRef.Value - 1u
-                        dARef.Value <- dARef.Value + v
+                        // As for `DV` above. The destination is the post-reset buffer, always
+                        // `ColMajor` — the only shape `AlphaAdd_M_M_Inplace'` updates in place —
+                        // while the source side goes through `GenMat.toMat`, which takes any.
+                        dARef.Value <- DM.Add_M_M_Inplace(v, dARef.Value)
                         let dA = dARef.Value
                         // If all incoming parts of the adjoint have been received, then proceed to the children
                         if dFanOutRef.Value = 0u then

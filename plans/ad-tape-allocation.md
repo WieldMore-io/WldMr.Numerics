@@ -1,11 +1,20 @@
 # Reverse-mode AD allocates ~2.5x what it needs to
 
-**Status: diagnosed, not fixed, 2026-08-05.** A harness exists
-(`consoles/BenchmarkAdTape`) and the cause is confirmed at three specific lines.
-Nobody has attempted a fix. This document is the hand-over. Reviewed against the
-code 2026-08-05, then step 1 — the `adjoint`/`.A` consumer audit — was executed
-the same day (section at the end). The audit's corrections supersede the
-review's `jacobian'` claim and are applied throughout the body.
+**Status: steps 1 and 2 landed 2026-08-07 (PR #18); step 4 followed the same
+day — see the step-4 section at the end. Step 3 is next, minding the
+empty-destination interaction described there.**
+
+History: diagnosed 2026-08-05 with a harness (`consoles/BenchmarkAdTape`) and
+the cause confirmed at three specific lines. Step 1, the `adjoint`/`.A` consumer
+audit, ran the same day; its corrections supersede the original review's
+`jacobian'` claim and are applied throughout the body. Step 2 — buffer reuse on
+reset plus the guarded copy in `adjoint` — shipped 2026-08-07.
+
+**Numbers *and line references* in the body below are pre-step-2.** They are
+kept because they are what motivated the work, but steps 2 and 4 both inserted
+lines into `AD.Lite.fs`, so every `:NNNN` in the body is stale — find the sites
+by name with `rg` instead. The step-4 section at the end carries the current
+allocation baseline and the verification recipe. Use those.
 
 ## Why this is worth doing
 
@@ -233,25 +242,28 @@ is a plain `DV` (and, for push, `v` too), falling back to allocation otherwise.
 
 ## Suggested order
 
-1. **Audit `adjoint` / `.A` consumers** — **done 2026-08-05**, full findings in
+1. ~~**Audit `adjoint` / `.A` consumers**~~ — **done 2026-08-05**, full findings in
    the audit section at the end. All eleven repos swept; contract adopted: an
    adjoint obtained through `adjoint` is the caller's own value, `.A` is the
    raw accessor and aliases the tape. Nothing below is blocked any more.
-2. **`:3428` + `:3530` + copy-at-boundary, as one indivisible change** — reuse
-   the buffer only when the existing value is a plain `DV`/`DM` of the right
-   length (constraint 5), behind the Fable guard, *and* make `adjoint`
-   (`:3346`) return a guarded copy in the same commit — reuse without the copy
-   breaks Analytics' `CurveSolver.ff'` (constraint 3, audit correction 2).
-   `-- width` already tells you exactly what it should buy.
+2. ~~**`:3428` + `:3530` + copy-at-boundary, as one indivisible change**~~ —
+   **done 2026-08-07, PR #18.** Reuse guarded on a plain `DV`/`DM(ColMajor)` of
+   matching shape (constraint 5), behind the Fable guard, with `adjoint`
+   (`:3346`) returning a copy for exactly the same case split, in the same
+   commit. Reset allocation went 115,656 → 2,136 B/pass and is now flat in
+   vector width. Cross-runtime tests in `tests/ExpectoTests/AdjointLifetimeTests.fs`.
 3. **`:576`** — if reset reuses buffers, question whether construction needs to
    allocate one eagerly at all. Mind the interaction with step 4: a non-empty
    contribution accumulated into an empty sentinel adjoint is
    `Backend.Add_V_V_Inplace`'s error path. Reset runs before every push
    (`:3996`), so "buffers are full-length by push time" holds — keep that
    invariant explicit.
-4. **`:3746`** — in-place adjoint accumulation. Biggest single win (push is ~2x
-   reset) and the most invasive; the dormant `DV.Add_V_V_Inplace` (`:906`) plus
-   the backend primitives are most of the machinery.
+4. ~~**`:3746`** — in-place adjoint accumulation.~~ — **done 2026-08-07.** The
+   `DV` and `DM` central accumulates now go through the previously dormant
+   `Add_V_V_Inplace`/`Add_M_M_Inplace`; push went 227,432 → 115,472 B/pass
+   (16.87 → 8.57 B/slot, i.e. each slot's value is now allocated once — the
+   derivative payload — instead of twice). Details in the step-4 section at
+   the end.
 5. **Reset per reverse pass (`:3996`)** — the multiplier, potentially worth more
    than 2-4 combined for multi-seed workloads. It has two separable levers, and
    they live in different repos:
@@ -534,3 +546,117 @@ of a public `[<AutoOpen>]` API.
 - Step 5 gains the `jacobian'` finding: N+1 forward passes per N-row Jacobian.
 
 All four applied to the body, 2026-08-05.
+
+## Step 4: in-place adjoint accumulation — landed 2026-08-07
+
+This section replaces the step-4 hand-over that previously stood here; it keeps
+only what later steps still need.
+
+### What changed
+
+The `DV` and `DM` central accumulates in `pushRec` — nothing else:
+
+```fsharp
+dARef.Value <- DV.Add_V_V_Inplace(v, dARef.Value)   // was: dARef.Value + v
+dARef.Value <- DM.Add_M_M_Inplace(v, dARef.Value)
+```
+
+The previously dormant `*_Inplace` members pass the same `fd`/`df_*`/`r_*`
+lambdas as `(+)`, so every mixed case (`DVF`/`DVR`/`DMF`/`DMR` on either side —
+constraint 5) dispatches exactly as before; only both-plain changes, to a
+destructive `daxpy` into the buffer reset leaves in place. They are destructive
+of their **second** argument, hence `v` first.
+
+Two facts made this smaller than the plan feared:
+
+- **The preconditions were already the site's own.** `Backend.Add_V_V` /
+  `GenMat.addM` at the same site already errored on the same shape mismatches —
+  `addM` even required `ColMajor` on *both* sides where in-place needs it only
+  on the destination. The one narrowing: an empty destination receiving a
+  non-empty contribution now errors instead of copying. A consistent graph
+  cannot produce that today, but it becomes the live error path if step 3
+  removes the eager allocation at `DV.R` — that is the step-3 interaction to
+  mind.
+- **Identity pushes were secretly expensive.** `Add_V_V`/`Mat.addM` with an
+  empty operand return a full copy of the other side, so every
+  `bxv DV.Zero a` / `bxm DM.Zero a` bookkeeping push (all the slicing ops emit
+  them) copied the entire adjoint. They are now no-ops.
+
+Deliberately left alone: the scalar `D` accumulate (an immutable scalar cannot
+accumulate in place) and the sixteen `.A <-` bypass sites in `pushRec`
+(`rg '\.A <-' AD.Lite.fs`). Push now costs ~8 B per adjoint slot — exactly one
+allocation per slot, the derivative payload itself (`dA .* b.P`, `-dA`, …).
+Going below that means fusing derivative computation into the accumulate (the
+structured-expression TODO at the `Sub_DM_DM` push site), a different and much
+larger change; in this op mix the bypass sites are inside the noise. Whoever
+does convert them must re-establish what made the central sites safe: the
+destination buffer is uniquely owned by its node, and a pushed contribution is
+only ever read.
+
+### Current baseline — what step 3 measures against
+
+`-- phases 8`, B/pass: forward 229,040 · reset 2,136 · push 115,472 ·
+reverseProp 117,608. Push was 227,432 (16.87 B/slot) before this step.
+
+BDN depth 8 `Allocated`: Forward 223.67 KB (1.00) · ForwardAndReset 225.76
+(1.01) · ForwardResetAndPush 338.88 (1.52) · ForwardThenSeedPasses ×8 1142.84
+(5.11).
+
+Downstream (`BenchmarkMarketBuild -- stages 20`, warm shared world): whole fit
+**74.0 MB**, `fitMktData` **47.0 MB** — from 86.6 / 59.8 before this work
+started, −14.6% cumulative, all of it inside curve fitting.
+
+### The failure signature changed — keep the tests honest
+
+With an in-place push, a broken `adjoint` copy no longer reads stale zeros; it
+**aliases the live buffer** — and a same-seed rerun refills an aliased buffer
+with identical values, which reads as green. That caught the DM lifetime test,
+which seeded both passes with `D.One`; it now seeds the second pass `D 3.0`.
+The rule for any test here: assert on values, distinct seeds (or functions) per
+pass, never reference identity. The copy-neutralisation drill — temporarily
+drop the copies in `DOps.adjoint`, expect the three survival tests red —
+verifies a test is load-bearing; it was re-run after the seeding fix.
+
+### Verification recipe (worked for steps 2 and 4, unchanged)
+
+```bash
+# in-repo
+dotnet test                                        # 16 + 11 + 35 pass, 6 skipped
+npm test                                           # Fable→JS, 11 passing
+dotnet fable tests/ExpectoTests --lang python -o py-build/tests/ExpectoTests \
+  && python3 py-build/tests/ExpectoTests/main.py   # 11 passing
+
+cd consoles/BenchmarkAdTape
+dotnet run -c Release -- phases 8
+dotnet run -c Release -- width
+dotnet run -c Release                              # BDN headline, ~7 min
+
+# downstream
+/git/wldmr-dev/scripts/local-feed.sh pack WldMr.Numerics WldMr.Analytics
+/git/wldmr-dev/scripts/local-feed.sh use  WldMr.Analytics
+# in WldMr.Analytics: dotnet test (445), npm test (222), then in
+# consoles/BenchmarkMarketBuild: -- fingerprint and -- stages 20
+/git/wldmr-dev/scripts/local-feed.sh clear         # always
+```
+
+**Expected fingerprint:
+`15a6fee33a346e31be9e6de14de49e968ea71958bdd5193885939d9d2c0cf52d`** — stable
+across stock, step 2 and step 4; any change to it is a real numerical
+regression, not noise.
+
+Gotchas that cost time, all still live: `local-feed.sh` is not on PATH (use the
+full path above); `-- stages 5` is JIT-contaminated, use 20 reps; don't pipe
+the BDN run through `tail`; Analytics' `npm test` runs three suites, redirect
+to a file and grep; `GenMat.addM`/`mulM` are `failwith "todo"` off the
+ColMajor+ColMajor diagonal, so DM experiments hit holes unrelated to AD.
+
+### Then what
+
+Step 3 (`DV.R`'s eager zero-vector) — mind the empty-destination interaction
+above. Step 5's in-library half is independent and cheap: `jacobian'` re-runs
+the whole forward pass per Jacobian row because `let r = jacobianTv f x` is a
+partial application; holding `jacobianTv''`'s `r2` fixes it.
+
+Adoption: `WldMr.Analytics` pins with `lowest_matching`, so it moves onto none
+of this by itself — it needs an explicit `>= x.y.z` minimum. See the
+`wldmr-cross-repo-dev` and `wldmr-analytics-release` skills.
