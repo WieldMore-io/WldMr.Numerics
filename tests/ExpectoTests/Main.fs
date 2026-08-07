@@ -17,6 +17,7 @@ let all =
     [
       BasicTests.tests
       CscMatTests.tests
+      AdjointLifetimeTests.tests
     ]
 
 [<EntryPoint>]
