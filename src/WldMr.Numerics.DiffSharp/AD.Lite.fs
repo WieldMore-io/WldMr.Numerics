@@ -3343,11 +3343,25 @@ module DOps =
     let inline tangent (d:^a when ^a : (member T : ^a)) = (^a : (member T : ^a) d)
 
     /// Get the adjoint value of `d`
+    ///
+    /// The result belongs to the caller. For the plain `DV`/`DM` cases — exactly the
+    /// ones `reverseReset` is allowed to zero in place — this hands back a copy, so a
+    /// gradient read here survives a later reverse pass over the same node. Reading
+    /// `.A` gives the tape's live buffer instead, and is only valid until that node's
+    /// next reset.
     let adjoint (d : 'T :> dobj) : 'T =
          match box d with
          | :? D as d -> d.A |> box :?> 'T
-         | :? DV as d -> d.A |> box :?> 'T
-         | :? DM as d -> d.A |> box :?> 'T
+         | :? DV as d ->
+             // Copy the case reset reuses, and only that one: a `DVF` adjoint under
+             // nested AD is never reused in place, so it can be passed straight on.
+             match d.A with
+             | DV a -> DV(Array.copyFast a) |> box :?> 'T
+             | a -> a |> box :?> 'T
+         | :? DM as d ->
+             match d.A with
+             | DM(ColMajor m) -> DM(ColMajor(Mat.copy m)) |> box :?> 'T
+             | a -> a |> box :?> 'T
          | _ -> failwith "invalid dobj type"
 
     /// Get the primal and tangent values of `d`, as a tuple
@@ -3425,7 +3439,20 @@ module DOps =
                 | :? DV as d ->
                     match d with
                     | DVR(dPrimal, dARef, o, dFanOutRef, _) ->
-                        dARef.Value <- DV.ZeroN dPrimal.Length
+                        // Zero the buffer already there rather than allocating a new one.
+                        // Only for a plain `DV` of the right length: under nested AD the
+                        // ref can hold a `DVF` carrying a tangent, and mutating that in
+                        // place would corrupt it. Callers get a copy from `adjoint`, so
+                        // reuse here is invisible to them.
+                        match dARef.Value with
+                        | DV a when a.Length = dPrimal.Length ->
+#if !FABLE_COMPILER
+                            System.Array.Clear(a, 0, a.Length)
+#else
+                            for i in 0 .. a.Length - 1 do
+                                a.[i] <- 0.
+#endif
+                        | _ -> dARef.Value <- DV.ZeroN dPrimal.Length
                         dFanOutRef.Value <- dFanOutRef.Value + 1u
                         if dFanOutRef.Value = 1u then
                             match o with
@@ -3527,7 +3554,17 @@ module DOps =
                 | :? DM as d ->
                     match d with
                     | DMR(_, dARef, o, dFanOutRef, _) ->
-                        dARef.Value <- DM.ZeroMN d.Rows d.Cols
+                        // As for `DV` above. `DM.ZeroMN` and `GenMat.addM` only ever
+                        // produce `ColMajor`, so that is the only shape worth reusing.
+                        match dARef.Value with
+                        | DM(ColMajor m) when m.NRows = d.Rows && m.NCols = d.Cols ->
+#if !FABLE_COMPILER
+                            System.Array.Clear(m.Data, 0, m.Data.Length)
+#else
+                            for i in 0 .. m.Data.Length - 1 do
+                                m.Data.[i] <- 0.
+#endif
+                        | _ -> dARef.Value <- DM.ZeroMN d.Rows d.Cols
                         dFanOutRef.Value <- dFanOutRef.Value + 1u
                         if dFanOutRef.Value = 1u then
                             match o with
