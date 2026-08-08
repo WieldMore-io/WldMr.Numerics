@@ -540,6 +540,88 @@ Also worth recording: **~25% of `Double[]` is Analytics, not AD** —
 `CstFwdCurve.MinusTotalRates` 8,631, `ResolvedFixings.dailySeries` 7,288,
 `DayCount.YearFraction` 2,667 a fit. Unexamined, and in-repo for that consumer.
 
+### The adjoint-pooling costing (2026-08-08) — measured, and it kills step 7 as written
+
+`reverseReset` was instrumented with counters (temporary, reverted) and run over
+20 MarketBuild fits. Per fit:
+
+| | per fit | |
+| --- | ---: | --- |
+| `reverseReset` calls | 1,197 | ~17 `DV` nodes per pass — the tapes are small |
+| `DV` node visits | 40,532 | mean fan-out 2.02 |
+| adjoint allocations | 20,096 | **every one from the empty sentinel** |
+| adjoint clears | 20,436 | **every one redundant** — see below |
+| wrong-length / `DVF` adjoints | **0** | the case the reuse guard exists for never fires |
+| `DM` adjoint allocations | **0** | there are no `DM` nodes in MarketBuild at all |
+
+**Three things follow, and the second one is the important one.**
+
+**1. The prize is smaller than the trace said.** 20,096 a fit, 2.6%, not the 25,426
+(3.1%) carried in the table below — and the by-frame attribution said 28,465, 42%
+high. `GCSampledObjectAllocationHigh` is a sampler; it ranks well and counts badly.
+Anything about to be costed to the nearest percent wants a counter, not a trace.
+
+**2. Pooling has no scope to exist in.** Each node allocates exactly one adjoint,
+on its first reset, and holds it for the life of the tape. Reset allocates *all* of
+them before `reverseProp` starts, so within a tape every adjoint is live at once and
+there is nothing to hand back. Reuse would have to be **across** tapes — 1,197 of
+them a fit — which needs a tape-lifetime signal that does not exist today and would
+have to cross the package boundary into Analytics to get one. That is option (a)'s
+hard half wearing a smaller hat, not the "narrow, no-audit-needed" half this plan
+promised. The claim that adjoint buffers are the easy half was right about
+*ownership* and wrong about *lifetime*, and only the lifetime matters for pooling.
+
+Three ways forward, none of them cheap:
+- **(i) an explicit tape scope + release protocol** — the honest version of step 7,
+  and it is days-to-weeks, not the hours the plan implied.
+- **(ii) defer allocation to `reverseProp` and free on fire.** A node's adjoint is
+  dead once it has fired and pushed to its children, so a liveness-ordered pool
+  *would* have intra-tape reuse. But it moves allocation into the hot traversal and
+  needs the reset/prop split reworked.
+- **(iii) reduce node count instead**, which is fusion — step 8 — and it takes the
+  buffers with it for free, because the buffer is one of the ~5 objects a node costs.
+
+**(iii) is the recommendation.** Pooling 20,096 arrays is 2.6%; fusing the ops that
+create the nodes removes the array, the node, the state and the TraceOp together.
+
+**3. A third of the adjoint buffers are `float[1]`.** 40 distinct lengths, and
+length 1 is 33.4% of the allocations, lengths ≤4 about half. A `double[1]` is 32
+bytes of which 24 is header. Worth a separate look at *why* MarketBuild builds so
+many length-1 `DV`s — that is an Analytics modelling question, not an AD one, and
+it is not on this list yet.
+
+### Done: zero the adjoint on the first visit only (2026-08-08)
+
+The measurement above found 20,436 redundant clears a fit against 20,096 real
+ones — **half the zeroing work in `reverseReset` did nothing**. A node is visited
+once per incoming edge, and every visit ran the type test, the length check and the
+`Array.Clear`, over a buffer the first visit had already zeroed.
+
+`st.F = 1u` already identifies the first visit, so the fix deletes a guard rather
+than adding one: the zeroing moves inside the branch that pushes the children.
+
+```fsharp
+st.F <- st.F + 1u
+if st.F = 1u then
+    match st.A with ...        // was above the increment, running every visit
+    match o with ...
+```
+
+Order-preserving (nothing runs between the two statements, and `st.A`/`st.F` are
+independent), so the fingerprint holds. Applied to all three arms.
+
+Wall **17.82 -> 17.53 ms** over six `profile 2000` runs each side (A: 17.7 17.5 17.9
+18.0 17.6 18.2; B: 17.7 17.5 17.5 17.6 17.5 17.4) — 1.6%, and worth stating
+carefully: it is about two standard errors, so it is real but only just, and B's
+spread is visibly tighter than A's. Allocation is unchanged by construction.
+
+> [!NOTE]
+> The instrumentation was worth more than the fix. Three of the five facts in the
+> table above — no `DM` nodes, no `DVF` adjoints, every allocation from the sentinel
+> — are things no trace would have shown, and the second of them is what overturned
+> the plan. When a step is about to be costed, a counter behind `#if !FABLE_COMPILER`
+> and a `ProcessExit` dump is an hour and answers the question exactly.
+
 ### Done: the ref merge (2026-08-08) — and why it costed exactly right
 
 Predicted −33,300 objects a fit and 4.1%; measured **−34,024 and −4.2%**
@@ -731,31 +813,33 @@ number is what a rewrite would have to be worth to justify itself.
    2026-08-08** — 34,024 objects a fit (**−4.2%**, 805,337 -> 771,313) and
    0.8 MB, fingerprint unchanged, wall unmoved. Re-promoted from (e), which had
    dismissed it on a byte reading. See "Done: the ref merge".
-7. **Pool adjoint buffers by length across a tape** — 25,426 arrays a fit, 3.1%.
-   **The next thing to do**, and step 6 is what makes it cheap: a pool needs
-   per-node bookkeeping (a rented-buffer handle, a length, or a generation stamp)
-   that the node did not carry. Before the merge that meant a *third* ref cell and
-   a fifth DU field — another arity change across the same ~118 sites. After it, it
-   is one `member val` on `NodeState` and **zero pattern sites touched**.
-   `NodeState<'T>` also has 4 bytes of tail padding, so any field of 4 bytes or
-   fewer is free; widening `F` past `uint32`, or adding a second reference, costs 8.
+7. ~~**Pool adjoint buffers by length across a tape.**~~ **Withdrawn 2026-08-08,
+   measured.** The prize is 20,096 arrays a fit (2.6%, not 3.1%), and there is no
+   scope to pool them in: every adjoint in a tape is live at once, so reuse has to
+   cross tapes and needs a lifetime signal that does not exist. See "The
+   adjoint-pooling costing". What came out of the measurement instead was the
+   redundant-clear fix, which is done.
 
-   Two shape notes for that work:
-   - **`NodeState` can hold the buffer but not the pool.** The pool must be
-     per-traversal-call for the same re-entrancy reason `SlotStack` is:
-     `FixedPoint_D` re-enters `reverseProp`/`reverseReset` while an outer traversal
-     is live. So the pool is a local alongside `SlotStack`; `NodeState` only records
-     what the node currently holds.
-   - **`A: 'T` is the wrapper (`DV`), not the storage (`float[]`)**, and pooling is
-     keyed on the storage's length. Reset already peels it
-     (`match st.A with DV a when a.Length = dPrimal.Length`), so nothing is blocked
-     — but an O(1) length on the `DM` path means unwrapping through
-     `GenMat`/`ColMajor`, and a cached length field on `NodeState` is the obvious
-     home if that shows up.
+   Kept for whoever revisits it: the mechanics *would* be cheap now — a pool handle
+   is one `member val` on `NodeState` and zero pattern sites, and `NodeState<'T>`
+   has 4 bytes of tail padding so any field of 4 bytes or fewer is free (widening
+   `F` past `uint32`, or a second reference, costs 8). The pool itself must be
+   per-traversal-call for the same re-entrancy reason `SlotStack` is — `FixedPoint_D`
+   re-enters while an outer traversal is live. And `A: 'T` is the wrapper (`DV`),
+   not the storage (`float[]`), so a length-keyed pool wants the `DM` path's length
+   without unwrapping `GenMat`/`ColMajor`. It is the *lifetime*, not the mechanics,
+   that stops this.
+
+7b. ~~**Zero the adjoint on the first visit only.**~~ **Done 2026-08-08** — half the
+   zeroing work in `reverseReset` was re-clearing already-zero buffers; 17.82 ->
+   17.53 ms, fingerprint unchanged.
    The narrow half of (a): adjoint buffers are node-owned and `adjoint` already
    copies on the way out, so this needs none of the primal-escape audit that makes
    the full arena expensive. See "What is left, measured".
-8. **(c) forward fusion** after that, for whatever the count profile then shows
+8. **(c) forward fusion — now the recommended next move**, promoted by step 7's
+   withdrawal: it is the only lever that takes the adjoint buffer, the node, the
+   state object and the TraceOp together, and after the four done items it is what
+   the remaining 13% of the fit's objects is made of. For whatever the count profile then shows
    leading — re-measure the TraceOp census first rather than reusing the chain
    named in step 2, since the gather adoption already replaced the CSR-matvec
    layer it referred to. Gate each fused op on a byte-identical fingerprint.
