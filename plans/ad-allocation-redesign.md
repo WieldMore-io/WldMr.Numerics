@@ -130,6 +130,9 @@ Analytics bond work was eliminating by hand.
 - *Struct `D` / merging `DVR`'s two ref cells into one state object* — the refs
   are ~1% of the trace; a struct DU can't be recursive, and the merge rewrites
   every `DVR(...)` pattern in a 4,200-line forked file for a marginal win.
+  **The merge half of this was wrong and is now done** — 4.2% of the fit's
+  objects, in a morning. The struct-`D` half still stands. See "Done: the ref
+  merge" for both the correction and why a byte reading produced it.
 
 ## The worklist: what an object-count profile says (2026-08-08)
 
@@ -502,7 +505,7 @@ what this fork actually does, that checklist splits three ways.
 | --- | ---: | ---: | --- |
 | `D` + `DV` wrappers | 174,759 | 21.7% | fusion — one per op result |
 | `Double[]` (AD's ~75% of 110,101) | ~83,000 | 10.3% | pooling; see the split below |
-| ref cells | 66,604 | 8.3% | **merge the two per node — next** |
+| ref cells | 66,604 | 8.3% | ~~merge the two per node~~ **done, see below** |
 | TraceOps | ~25,000 | 3.1% | fusion |
 | `DVR` + `DR` nodes | 33,320 | 4.1% | fusion, or the index tape |
 
@@ -537,7 +540,57 @@ Also worth recording: **~25% of `Double[]` is Analytics, not AD** —
 `CstFwdCurve.MinusTotalRates` 8,631, `ResolvedFixings.dailySeries` 7,288,
 `DayCount.YearFraction` 2,667 a fit. Unexamined, and in-repo for that consumer.
 
-### Correction: the ref cells are a count item, not a byte item
+### Done: the ref merge (2026-08-08) — and why it costed exactly right
+
+Predicted −33,300 objects a fit and 4.1%; measured **−34,024 and −4.2%**
+(805,337 -> 771,313), against a prediction made from a count profile rather than a
+byte one. That is the point worth keeping: the count profile's arithmetic is
+*additive and checkable* — 66,604 refs against 33,320 nodes is exactly two per
+node, so exactly half of them go, and nothing about the estimate needed a
+measurement to confirm. Byte profiles do not offer that, which is how these
+same refs sat under "the refs are ~1% of the trace" for two rounds.
+
+```fsharp
+type NodeState<'T>(a: 'T) =
+    member val A = a with get, set     // accumulated adjoint
+    member val F = 0u with get, set    // fan-out counter
+
+| DR of primal: D * state: NodeState<D> * parentOperation: TraceOp * tag: uint32
+```
+
+One generic class over the three node types, not three concrete ones: `'T` is
+always a reference type, so .NET shares a single canonical instantiation and there
+is no code duplication to pay for. It compiles on all three targets unchanged —
+`member val` was already in Fable-compiled code (`Util.fs`'s `GlobalTagger`).
+
+Results: fingerprint `15a6fee3…f52d` **unchanged**, 43.1 -> 42.3 MB/fit, wall
+17.7 ms (unmoved, 17.5–17.9 across three runs), GC pause 2.59 -> 2.59 ms. Green on
+18 Expecto + 16 LinAlg + 37 Checks (.NET), 18 Fable/JS, 18 Fable/Python, and
+downstream 446 + 222.
+
+> [!NOTE]
+> **The edit was 92 mechanical sites and 6 real ones**, and separating them is what
+> made it a morning rather than a day. Every read-only pattern has `_` in *both*
+> the adjoint and the fan-out slot, so one regex requiring `_` in each — dropping
+> the fourth field — could not touch a site that actually binds either ref. That
+> left the six `reverseReset`/`reverseProp` blocks, which were the only places to
+> read carefully. It compiled first try; `WarningsAsErrors=FS0025` in
+> `src/Directory.Build.props` is what makes an arity change in a DU safe to do this
+> way at all, since a missed pattern is a build error and not a runtime surprise.
+
+> [!NOTE]
+> The in-repo `BenchmarkAdTape -- phases` signal was 2042.1 -> 2018.1 B/node on the
+> forward pass and *exactly* unchanged on reset and push — which is what a
+> construction-side-only change should look like, and a useful shape to check
+> before spending the downstream loop.
+
+> [!WARNING]
+> The object trace's own MB/fit read 41.0 against `-- profile`'s 42.3, a 3% gap
+> where the script's header asks for ~1%. `GCSampledObjectAllocationHigh` samples,
+> so a few percent is expected drift and it does not move any ranking here — but if
+> that gap widens, re-check it before trusting a *count* from the same trace.
+
+### Correction (now closed): the ref cells were a count item, not a byte item
 
 Option (e) dismissed "merging `DVR`'s two ref cells into one state object" because
 "the refs are ~1% of the trace". That was a **byte** judgement and the count profile
@@ -614,12 +667,13 @@ ever taken, and only after (1) is sized and (3) is built.
 
 ### The ceiling, quantified
 
-After both worklist changes a node still costs **4 objects: the node, two refs and
-the TraceOp** — ~135,000 a fit, 12.8% of a MarketBuild's allocation. Merging the
-refs takes that to 3 and ~101,000 (9.6%). Below that, the object graph *is* the
-tape, and only replacing it with an index tape removes the rest. So the incremental
-path has a floor of roughly 10% of the fit's objects, and that number is what a
-rewrite would have to be worth to justify itself.
+After both worklist changes a node still cost **4 objects: the node, two refs and
+the TraceOp** — ~135,000 a fit, 12.8% of a MarketBuild's allocation. The ref merge
+took that to **3 and ~101,000**, which is now the measured state, not a projection.
+Below it the object graph *is* the tape, and only replacing it with an index tape
+removes the rest. So the incremental path has a floor of roughly 10% of the fit's
+objects — 13.1% of the smaller 771,313 total it is now measured against — and that
+number is what a rewrite would have to be worth to justify itself.
 
 ## Sequencing
 
@@ -644,11 +698,12 @@ rewrite would have to be worth to justify itself.
 5. ~~**Two allocations that bought nothing** — the `Add_V_V_Inplace` wrapper and
    the uncached `Zero`/`One` properties.~~ **Done 2026-08-08**, 92,258 objects and
    2.0 MB a fit.
-6. **Merge `DVR`/`DR`'s two ref cells into one node-state object** — 33,284 +
-   18,356 + 14,964 = 66,604 refs a fit against 33,320 nodes, so merging saves
-   ~33,300, now **4.1%** of a smaller total. The next thing to do. Re-promoted from (e), which dismissed it on a byte reading;
-   see "Correction: the ref cells are a count item".
+6. ~~**Merge `DVR`/`DR`'s two ref cells into one node-state object.**~~ **Done
+   2026-08-08** — 34,024 objects a fit (**−4.2%**, 805,337 -> 771,313) and
+   0.8 MB, fingerprint unchanged, wall unmoved. Re-promoted from (e), which had
+   dismissed it on a byte reading. See "Done: the ref merge".
 7. **Pool adjoint buffers by length across a tape** — 25,426 arrays a fit, 3.1%.
+   **The next thing to do.**
    The narrow half of (a): adjoint buffers are node-owned and `adjoint` already
    copies on the way out, so this needs none of the primal-escape audit that makes
    the full arena expensive. See "What is left, measured".
@@ -676,6 +731,7 @@ worklist changes. Requires per-kernel fingerprint proof: (c), both flavours.
 | struct-tuple push worklist | **done** — six lines + the verification day |
 | array-backed worklists | **done** — a day, as costed, plus one measure-and-fix cycle |
 | uncached `Zero` / redundant `Add_V_V_Inplace` wrapper | **done** — an hour, once the counts were attributed by frame |
+| e. merge the two ref cells per node | **done** — a morning: 92 sites by regex, 6 by hand |
 | d. lazy `DV.R` adjoint | hours (+ a day of tri-target and downstream verification) |
 | c. forward fusion, per op family | days |
 | a. push-temp pool | days |

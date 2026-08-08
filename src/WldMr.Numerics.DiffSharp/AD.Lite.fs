@@ -37,6 +37,22 @@ module N =
 
     let inline log10Val<'T>              = log10ValFloat64
 
+/// Reverse-mode state of one tape node: the accumulated adjoint and the fan-out
+/// counter, in one mutable object.
+///
+/// These were two separate `ref` cells. Every reverse node therefore paid two
+/// allocations to hold two words that are only ever read and written together --
+/// 66,604 cells a MarketBuild fit against 33,320 nodes, 8.3% of everything the fit
+/// allocated. Merging them halves that and takes a node from 4 construction objects
+/// to 3.
+type NodeState<'T>(a: 'T) =
+    /// Accumulated adjoint. Seeded with the type's shared empty sentinel and
+    /// materialised to the right shape by `reverseReset` -- see `DV.R`.
+    member val A = a with get, set
+    /// Fan-out counter: incremented by `reverseReset` per incoming edge, decremented
+    /// by `reverseProp` per contribution, and the node fires when it reaches zero.
+    member val F = 0u with get, set
+
 /// Scalar numeric type keeping dual numbers for forward mode and adjoints and tapes for reverse mode AD,
 /// with nesting capability, using tags to avoid perturbation confusion
 [<CustomEquality; CustomComparison>]
@@ -49,19 +65,19 @@ type D =
     | DF of primal: D * tangent: D * tag: uint32
 
     /// Primal, parent, layer tag (for reverse mode)
-    | DR of primal: D * adjoint: (D ref) * parentOperation: TraceOp * fanOutCounter: (uint32 ref) * tag: uint32
+    | DR of primal: D * state: NodeState<D> * parentOperation: TraceOp * tag: uint32
 
     interface dobj
 
     /// Make a reverse node
-    static member R(d, op, ai) = DR(d, ref D.Zero, op, ref 0u, ai)
+    static member R(d, op, ai) = DR(d, NodeState D.Zero, op, ai)
 
     /// Primal value of this D
     member d.P =
         match d with
         | D _ -> d
         | DF(ap, _, _) -> ap
-        | DR(ap, _, _, _, _) -> ap
+        | DR(ap, _, _, _) -> ap
 
     /// Deepest primal value of this D
     member d.PD =
@@ -69,7 +85,7 @@ type D =
             match x with
             | D _ -> x
             | DF(xp, _, _) -> prec xp
-            | DR(xp, _, _, _, _) -> prec xp
+            | DR(xp, _, _, _) -> prec xp
         prec d
 
     /// Tangent value of this D
@@ -85,12 +101,12 @@ type D =
             match d with
             | D _ -> D.Zero
             | DF _ -> failwith "Cannot get adjoint value of DF."
-            | DR(_,a,_,_,_) -> a.Value
+            | DR(_, st, _, _) -> st.A
         and set(v: D) =
             match d with
             | D _ -> ()
             | DF _ -> failwith "Cannot set adjoint value of DF."
-            | DR (_,a,_,_,_) -> a.Value <- v
+            | DR (_, st, _, _) -> st.A <- v
 
     /// Fan-out counter of this D
     member d.F
@@ -98,12 +114,12 @@ type D =
             match d with
             | D _ -> failwith "Cannot get fan-out value of D."
             | DF _ -> failwith "Cannot get fan-out value of DF."
-            | DR (_,_,_,f,_) -> f.Value
+            | DR (_, st, _, _) -> st.F
         and set(v) =
             match d with
             | D _ -> failwith "Cannot set fan-out value of D."
             | DF _ -> failwith "Cannot set fan-out value of DF."
-            | DR (_,_,_,f,_) -> f.Value <- v
+            | DR (_, st, _, _) -> st.F <- v
 
     member d.GetForward(t:D, i:uint32) = DF(d, t, i)
 
@@ -121,7 +137,7 @@ type D =
             match x with
             | D(p) -> p
             | DF(xp, _, _) -> prec xp
-            | DR(xp, _, _, _, _) -> prec xp
+            | DR(xp, _, _, _) -> prec xp
         prec d
 
 //    static member op_Explicit(d:D):number =
@@ -129,7 +145,7 @@ type D =
 //            match x with
 //            | D(p) -> p
 //            | DF(xp, _, _) -> prec xp
-//            | DR(xp, _, _, _, _) -> prec xp
+//            | DR(xp, _, _, _) -> prec xp
 //        prec d
 
     interface System.IComparable with
@@ -147,7 +163,7 @@ type D =
         match d with
         | D(ap) -> hash [|ap|]
         | DF(ap, at, ai) -> hash [|ap; at; ai|]
-        | DR(ap, _, ao, _, ai) -> hash [|ap; ao; ai|]
+        | DR(ap, _, ao, ai) -> hash [|ap; ao; ai|]
 
     override d.ToString() =
         let (d':number) = D.toFloat(d)
@@ -160,7 +176,7 @@ type D =
         match a with
         | D(ap)                    -> D(ff(ap))
         | DF(ap, at, ai)           -> let cp = fd(ap) in DF(cp, df(cp, ap, at), ai)
-        | DR(ap, _, _, _, ai)      -> D.R(fd(ap), r(a), ai)
+        | DR(ap, _, _, ai)      -> D.R(fd(ap), r(a), ai)
 
     static member inline Op_D_D_D (a, b, [<InlineIfLambda>]ff, fd, df_da, df_db, df_dab, r_d_d, r_d_c, r_c_d) =
         match a with
@@ -168,7 +184,7 @@ type D =
             match b with
             | D(bp)                  -> D(ff(ap, bp))
             | DF(bp, bt, bi)         -> let cp = fd(a, bp) in DF(cp, df_db(cp, bp, bt), bi)
-            | DR(bp, _,  _, _, bi)   -> D.R(fd(a, bp), r_c_d(a, b), bi)
+            | DR(bp, _, _, bi)   -> D.R(fd(a, bp), r_c_d(a, b), bi)
         | DF(ap, at, ai) ->
             match b with
             | D _                   -> let cp = fd(ap, b) in DF(cp, df_da(cp, ap, at), ai)
@@ -177,12 +193,12 @@ type D =
                 | 0                  -> let cp = fd(ap, bp) in DF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                 -> let cp = fd(a, bp) in DF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                  -> let cp = fd(ap, b) in DF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DR(bp, _, _, _, bi) ->
+            | DR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                 -> D.R(fd(a, bp), r_c_d(a, b), bi) // ai < bi
                 | 1                  -> let cp = fd(ap, b) in DF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                  -> failwith "Forward and reverse AD cannot run on the same level."
-        | DR(ap, _, _, _, ai) ->
+        | DR(ap, _, _, ai) ->
             match b with
             | D _                   -> D.R(fd(ap, b), r_d_c(a, b), ai)
             | DF(bp, bt, bi) ->
@@ -190,7 +206,7 @@ type D =
                 | -1                 -> let cp = fd(a, bp) in DF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                  -> D.R(fd(ap, b), r_d_c(a, b), ai) // ai > bi
                 | _                  -> failwith "Forward and reverse AD cannot run on the same level."
-            | DR(bp, _, _, _, bi) ->
+            | DR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                  -> D.R(fd(ap, bp), r_d_d(a, b), ai) // ai = bi
                 | -1                 -> D.R(fd(a, bp), r_c_d(a, b), bi) // ai < bi
@@ -494,7 +510,7 @@ type D =
                         i <- imax
                     a <- aa
             DF(a.P, a.T, bi)
-        | DR(bp, _, _, _, bi) ->
+        | DR(bp, _, _, bi) ->
             let bfirst = D.R(bp, Noop, bi) // Cut the connection between b and bfirst ("switch of graph construction" involving b beyond this point)
             while i < imax do
                 i <- i + 1
@@ -516,7 +532,7 @@ type D =
 and DV =
     | DV of number[] // Primal
     | DVF of DV * DV * uint32 // Primal, tangent, layer tag
-    | DVR of primal: DV * adjoint: (DV ref) * TraceOp * (uint32 ref) * uint32 // Primal, adjoint, parent operation, fan-out counter, tag
+    | DVR of primal: DV * state: NodeState<DV> * TraceOp * uint32 // Primal, adjoint + fan-out state, parent operation, tag
 
     interface dobj
 
@@ -525,7 +541,7 @@ and DV =
         match d with
         | DV _ -> d
         | DVF(ap, _, _) -> ap
-        | DVR(ap, _, _, _, _) -> ap
+        | DVR(ap, _, _, _) -> ap
 
     /// Deepest primal value of this DV
     member d.PD =
@@ -533,7 +549,7 @@ and DV =
             match x with
             | DV _ -> x
             | DVF(xp, _, _) -> prec xp
-            | DVR(xp, _, _, _, _) -> prec xp
+            | DVR(xp, _, _, _) -> prec xp
         prec d
 
     /// Tangent value of this DV
@@ -549,12 +565,12 @@ and DV =
             match d with
             | DV _ -> DV.ZeroN d.Length
             | DVF _ -> failwith "Cannot get adjoint value of DVF."
-            | DVR(_,a,_,_,_) -> a.Value
+            | DVR(_, st, _, _) -> st.A
         and set(v: DV) =
             match d with
             | DV _ -> ()
             | DVF _ -> failwith "Cannot set adjoint value of DVF."
-            | DVR(_,a,_,_,_) -> a.Value <- v
+            | DVR(_, st, _, _) -> st.A <- v
 
     /// Fan-out counter of this DV
     member d.F
@@ -562,12 +578,12 @@ and DV =
             match d with
             | DV _ -> failwith "Cannot get fan-out value of DV."
             | DVF _ -> failwith "Cannot get fan-out value of DVF."
-            | DVR(_,_,_,f,_) -> f.Value
+            | DVR(_, st, _, _) -> st.F
         and set(v) =
             match d with
             | DV _ -> failwith "Cannot set fan-out value of DV."
             | DVF _ -> failwith "Cannot set fan-out value of DVF."
-            | DVR(_,_,_,f,_) -> f.Value <- v
+            | DVR(_, st, _, _) -> st.F <- v
 
     /// Convert to use forward AD at this layer
     member d.GetForward(t:DV, i:uint32) = DVF(d, t, i)
@@ -579,20 +595,20 @@ and DV =
     // The adjoint starts as the shared empty sentinel rather than an eager
     // full-length zero vector: `reverseReset` runs before every push and its
     // shape-mismatch arm materialises the buffer on the node's first reset.
-    static member R(d, op, ai) = DVR(d, ref DV.Zero, op, ref 0u, ai)
+    static member R(d, op, ai) = DVR(d, NodeState DV.Zero, op, ai)
 
     member d.Length =
         match d with
         | DV(ap) -> ap.Length
         | DVF(ap, _, _) -> ap.Length
-        | DVR(ap, _, _, _, _) -> ap.Length
+        | DVR(ap, _, _, _) -> ap.Length
 
     member d.Item
         with get i =
             match d with
             | DV(ap) -> D(ap.[i])
             | DVF(ap, at, ai) -> DF(ap.[i], at.[i], ai)
-            | DVR(ap, _, _, _, ai) -> D.R(ap.[i], Item_DV(d, i), ai)
+            | DVR(ap, _, _, ai) -> D.R(ap.[i], Item_DV(d, i), ai)
 
     member d.GetSlice(lower, upper) =
         let l = defaultArg lower 0
@@ -600,21 +616,21 @@ and DV =
         match d with
         | DV(ap) -> DV(ap.[l..u])
         | DVF(ap, at, ai) -> DVF(ap.[l..u], at.[l..u], ai)
-        | DVR(ap, _, _, _, ai) -> let cp = ap.[l..u] in DV.R(cp, Slice_DV(d, l), ai)
+        | DVR(ap, _, _, ai) -> let cp = ap.[l..u] in DV.R(cp, Slice_DV(d, l), ai)
 
     member d.ToArray() =
         match d with
         | DV(ap) -> ap |> Array.map D
         | DVF(ap, at, ai) ->
             Array.init ap.Length (fun i -> DF(ap.[i], at.[i], ai))
-        | DVR(ap, _, _, _, ai) ->
+        | DVR(ap, _, _, ai) ->
             Array.init ap.Length (fun i -> D.R(ap.[i], Item_DV(d, i), ai))
 
     member d.ToRowDM() =
         match d with
         | DV(ap) -> ap |> Mat.rowVector |> ColMajor |> DM
         | DVF(ap, at, ai) -> DMF(ap.ToRowDM(), at.ToRowDM(), ai)
-        | DVR(ap, _, _, _, ai) -> let cp = ap.ToRowDM() in DM.R(cp, RowMatrix_DV(d), ai)
+        | DVR(ap, _, _, ai) -> let cp = ap.ToRowDM() in DM.R(cp, RowMatrix_DV(d), ai)
 
     member d.ToColDM() = DM.Transpose(d.ToRowDM())
 
@@ -663,7 +679,7 @@ and DV =
             match x with
             | DV(p) -> p
             | DVF(xp, _, _) -> prec xp
-            | DVR(xp, _, _, _, _) -> prec xp
+            | DVR(xp, _, _, _) -> prec xp
         prec d
 
 //    static member op_Explicit(d:DV):number[] =
@@ -671,7 +687,7 @@ and DV =
 //            match x with
 //            | DV(p) -> p
 //            | DVF(xp, _, _) -> prec xp
-//            | DVR(xp, _, _, _, _) -> prec xp
+//            | DVR(xp, _, _, _) -> prec xp
 //        prec d
 
     static member ofFloat(d: float[]) = DV(d)
@@ -688,7 +704,7 @@ and DV =
             let ap = a |> Array.map (fun x -> x.P)
             let at = a |> Array.map (fun x -> x.T)
             DVF(DV.OfArray(ap), DV.OfArray(at), ai)
-        | Some(DR(_, _, _, _, ai)) ->
+        | Some(DR(_, _, _, ai)) ->
             let ap = a |> Array.map (fun x -> x.P)
             let cp = DV.OfArray(ap) in DV.R(cp, Make_DV_ofDs(a), ai)
         | _ -> failwith "unreachable code"
@@ -702,7 +718,7 @@ and DV =
             let aps = DV.Split(ap, n)
             let ats = DV.Split(at, n)
             Seq.map2 (fun p t -> DVF(p, t, ai)) aps ats
-        | DVR(ap, _, _, _, ai) ->
+        | DVR(ap, _, _, ai) ->
             let aps = DV.Split(ap, n)
             let ii = n |> Seq.mapFold (fun s i -> s, s + i) 0 |> fst |> Array.ofSeq
             Seq.mapi (fun i p -> DV.R(p, Split_DV(d, ii.[i]), ai)) aps
@@ -712,19 +728,19 @@ and DV =
         match a with
         | DV(ap)                      -> DV(ff(ap))
         | DVF(ap, at, ai)             -> let cp = fd(ap) in DVF(cp, df(cp, ap, at), ai)
-        | DVR(ap, _, _, _, ai)            -> let cp = fd(ap) in DV.R(cp, r(a), ai)
+        | DVR(ap, _, _, ai)            -> let cp = fd(ap) in DV.R(cp, r(a), ai)
 
     static member inline Op_DV_DM (a, ff, fd, df, r) =
         match a with
         | DV(ap)                      -> DM(ff(ap))
         | DVF(ap, at, ai)             -> let cp = fd(ap) in DMF(cp, df(cp, ap, at), ai)
-        | DVR(ap, _, _, _, ai)            -> let cp = fd(ap) in DM.R(cp, r(a), ai)
+        | DVR(ap, _, _, ai)            -> let cp = fd(ap) in DM.R(cp, r(a), ai)
 
     static member inline Op_DV_D (a, ff, fd, df, r) =
         match a with
         | DV(ap)                      -> D(ff(ap))
         | DVF(ap, at, ai)             -> let cp = fd(ap) in DF(cp, df(cp, ap, at), ai)
-        | DVR(ap, _, _, _, ai)            -> let cp = fd(ap) in D.R(cp, r(a), ai)
+        | DVR(ap, _, _, ai)            -> let cp = fd(ap) in D.R(cp, r(a), ai)
 
     static member inline Op_DV_DV_DV (a, b, [<InlineIfLambda>]ff, fd, df_da, df_db, df_dab, r_d_d, r_d_c, r_c_d) =
         match a with
@@ -732,7 +748,7 @@ and DV =
             match b with
             | DV(bp)                  -> DV(ff(ap, bp))
             | DVF(bp, bt, bi)         -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi)
-            | DVR(bp, _, _, _, bi) -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi)
+            | DVR(bp, _, _, bi) -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi)
         | DVF(ap, at, ai) ->
             match b with
             | DV _                   -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai)
@@ -741,12 +757,12 @@ and DV =
                 | 0                   -> let cp = fd(ap, bp) in DVF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                   -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DVR(bp, _, _, _, bi) ->
+            | DVR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                  -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-        | DVR(ap, _, _, _, ai) ->
+        | DVR(ap, _, _, ai) ->
             match b with
             | DV _                   -> let cp = fd(ap, b) in DV.R(cp, r_d_c(a, b), ai)
             | DVF(bp, bt, bi) ->
@@ -754,7 +770,7 @@ and DV =
                 | -1                  -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DV.R(cp, r_d_c(a, b), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-            | DVR(bp, _, _, _, bi) ->
+            | DVR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                   -> let cp = fd(ap, bp) in DV.R(cp, r_d_d(a, b), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi) // ai < bi
@@ -766,7 +782,7 @@ and DV =
             match b with
             | DV(bp)                  -> DM(ff(ap, bp))
             | DVF(bp, bt, bi)         -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi)
-            | DVR(bp, _, _, _, bi) -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
+            | DVR(bp, _, _, bi) -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
         | DVF(ap, at, ai) ->
             match b with
             | DV _                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai)
@@ -775,12 +791,12 @@ and DV =
                 | 0                   -> let cp = fd(ap, bp) in DMF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DVR(bp, _, _, _, bi) ->
+            | DVR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-        | DVR(ap, _, _, _, ai) ->
+        | DVR(ap, _, _, ai) ->
             match b with
             | DV _                   -> let cp = fd(ap, b) in DM.R(cp, r_d_c(a, b), ai)
             | DVF(bp, bt, bi) ->
@@ -788,7 +804,7 @@ and DV =
                 | -1                  -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DM.R(cp, r_d_c(a, b), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-            | DVR(bp, _, _, _, bi) ->
+            | DVR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                   -> let cp = fd(ap, bp) in DM.R(cp, r_d_d(a, b), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi) // ai < bi
@@ -800,7 +816,7 @@ and DV =
             match b with
             | DV(bp)                  -> D(ff(ap, bp))
             | DVF(bp, bt, bi)         -> let cp = fd(a, bp) in DF(cp, df_db(cp, bp, bt), bi)
-            | DVR(bp, _, _, _, bi) -> D.R(fd(a, bp), r_c_d(a, b), bi)
+            | DVR(bp, _, _, bi) -> D.R(fd(a, bp), r_c_d(a, b), bi)
         | DVF(ap, at, ai) ->
             match b with
             | DV _                   -> let cp = fd(ap, b) in DF(cp, df_da(cp, ap, at), ai)
@@ -809,12 +825,12 @@ and DV =
                 | 0                   -> let cp = fd(ap, bp) in DF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                   -> let cp = fd(ap, b) in DF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DVR(bp, _, _, _, bi) ->
+            | DVR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                  -> D.R(fd(a, bp), r_c_d(a, b), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-        | DVR(ap, _, _, _, ai) ->
+        | DVR(ap, _, _, ai) ->
             match b with
             | DV _                   -> D.R(fd(ap, b), r_d_c(a, b), ai)
             | DVF(bp, bt, bi) ->
@@ -822,7 +838,7 @@ and DV =
                 | -1                  -> let cp = fd(a, bp) in DF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                   -> D.R(fd(ap, b), r_d_c(a, b), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-            | DVR(bp, _, _, _, bi) ->
+            | DVR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                   -> D.R(fd(ap, bp), r_d_d(a, b), ai) // ai = bi
                 | -1                  -> D.R(fd(a, bp), r_c_d(a, b), bi) // ai < bi
@@ -834,7 +850,7 @@ and DV =
             match b with
             | D(bp)                   -> DV(ff(ap, bp))
             | DF(bp, bt, bi)          -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi)
-            | DR(bp, _, _, _, bi)  -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi)
+            | DR(bp, _, _, bi)  -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi)
         | DVF(ap, at, ai) ->
             match b with
             | D _                    -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai)
@@ -843,12 +859,12 @@ and DV =
                 | 0                    -> let cp = fd(ap, bp) in DVF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                   -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                    -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DR(bp, _, _, _, bi) ->
+            | DR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                   -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi) // ai < bi
                 | 1                    -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                    -> failwith "Forward and reverse AD cannot run on the same level."
-        | DVR(ap, _, _, _, ai) ->
+        | DVR(ap, _, _, ai) ->
             match b with
             | D _                    -> let cp = fd(ap, b) in DV.R(cp, r_d_c(a, b), ai)
             | DF(bp, bt, bi) ->
@@ -856,7 +872,7 @@ and DV =
                 | -1                   -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                    -> let cp = fd(ap, b) in DV.R(cp, r_d_c(a, b), ai) // ai > bi
                 | _                    -> failwith "Forward and reverse AD cannot run on the same level."
-            | DR(bp, _, _, _, bi) ->
+            | DR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                    -> let cp = fd(ap, bp) in DV.R(cp, r_d_d(a, b), ai) // ai = bi
                 | -1                   -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi) // ai < bi
@@ -869,7 +885,7 @@ and DV =
             match b with
             | DV(bp)                  -> DV(ff(ap, bp))
             | DVF(bp, bt, bi)         -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi)
-            | DVR(bp, _, _, _, bi) -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi)
+            | DVR(bp, _, _, bi) -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi)
         | DF(ap, at, ai) ->
             match b with
             | DV _                   -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai)
@@ -878,12 +894,12 @@ and DV =
                 | 0                   -> let cp = fd(ap, bp) in DVF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                   -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DVR(bp, _, _, _, bi) ->
+            | DVR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                  -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-        | DR(ap, _, _, _, ai) ->
+        | DR(ap, _, _, ai) ->
             match b with
             | DV _                   -> let cp = fd(ap, b) in DV.R(cp, r_d_c(a, b), ai)
             | DVF(bp, bt, bi) ->
@@ -891,7 +907,7 @@ and DV =
                 | -1                  -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DV.R(cp, r_d_c(a, b), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-            | DVR(bp, _, _, _, bi) ->
+            | DVR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                   -> let cp = fd(ap, bp) in DV.R(cp, r_d_d(a, b), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi) // ai < bi
@@ -1574,7 +1590,7 @@ and DM =
     /// Primal, tangent, layer tag (for forward mode)
     | DMF of primal: DM * tangent: DM * tag: uint32
     /// Primal, parent, layer tag (for reverse mode)
-    | DMR of primal: DM * adjoint: (DM ref) * parentOperation: TraceOp * fanOutCounter: (uint32 ref) * tag: uint32
+    | DMR of primal: DM * state: NodeState<DM> * parentOperation: TraceOp * tag: uint32
 
     interface dobj
 
@@ -1583,7 +1599,7 @@ and DM =
         match d with
         | DM(_) -> d
         | DMF(ap, _, _) -> ap
-        | DMR(ap, _, _, _, _) -> ap
+        | DMR(ap, _, _, _) -> ap
 
     /// Deepest primal value of this DM
     member d.PD =
@@ -1591,7 +1607,7 @@ and DM =
             match x with
             | DM(_) -> x
             | DMF(xp, _, _) -> prec xp
-            | DMR(xp, _, _, _, _) -> prec xp
+            | DMR(xp, _, _, _) -> prec xp
         prec d
 
     /// Tangent value of this DM
@@ -1607,12 +1623,12 @@ and DM =
             match d with
             | DM _ -> DM.ZeroMN d.Rows d.Cols
             | DMF _ -> failwith "Cannot get adjoint value of DMF."
-            | DMR(_,a,_,_,_) -> a.Value
+            | DMR(_, st, _, _) -> st.A
         and set(v: DM) =
             match d with
             | DM _ -> ()
             | DMF _ -> failwith "Cannot set adjoint value of DMF."
-            | DMR(_,a,_,_,_) -> a.Value <- v
+            | DMR(_, st, _, _) -> st.A <- v
 
     /// Fan-out value of this DM
     member d.F
@@ -1620,12 +1636,12 @@ and DM =
             match d with
             | DM _ -> failwith "Cannot get fan-out value of DM."
             | DMF _ -> failwith "Cannot get fan-out value of DMF."
-            | DMR(_,_,_,f,_) -> f.Value
+            | DMR(_, st, _, _) -> st.F
         and set(v) =
             match d with
             | DM _ -> failwith "Cannot set fan-out value of DM."
             | DMF _ -> failwith "Cannot set fan-out value of DMF."
-            | DMR(_,_,_,f,_) -> f.Value <- v
+            | DMR(_, st, _, _) -> st.F <- v
 
     member d.GetForward(t:DM, i:uint32) = DMF(d, t, i)
 
@@ -1634,32 +1650,32 @@ and DM =
     /// Make a reverse node
     // As for `DV.R`: the empty sentinel, materialised by reset's shape-mismatch
     // arm on the node's first reset.
-    static member R(cp, op, ai) = DMR(cp, ref DM.Zero, op, ref 0u, ai)
+    static member R(cp, op, ai) = DMR(cp, NodeState DM.Zero, op, ai)
 
     member d.Length =
         match d with
         | DM(ap) -> ap.Length
         | DMF(ap, _, _) -> ap.Length
-        | DMR(ap, _, _, _, _) -> ap.Length
+        | DMR(ap, _, _, _) -> ap.Length
 
     member d.Rows =
         match d with
         | DM(ap) -> ap.NRows
         | DMF(ap, _, _) -> ap.Rows
-        | DMR(ap, _, _, _, _) -> ap.Rows
+        | DMR(ap, _, _, _) -> ap.Rows
 
     member d.Cols =
         match d with
         | DM(ap) -> ap.NCols
         | DMF(ap, _, _) -> ap.Cols
-        | DMR(ap, _, _, _, _) -> ap.Cols
+        | DMR(ap, _, _, _) -> ap.Cols
 
     member d.Item
         with get (i, j) =
             match d with
             | DM(ap) -> D(ap.[i, j])
             | DMF(ap, at, ai) -> DF(ap.[i, j], at.[i, j], ai)
-            | DMR(ap, _, _, _, ai) -> D.R(ap.[i, j], Item_DM(d, i, j), ai)
+            | DMR(ap, _, _, ai) -> D.R(ap.[i, j], Item_DM(d, i, j), ai)
 
     member d.GetSlice(rowStart, rowFinish, colStart, colFinish) =
         let rowStart = defaultArg rowStart 0
@@ -1669,7 +1685,7 @@ and DM =
         match d with
         | DM(ap) -> DM(ap.[rowStart..rowFinish, colStart..colFinish])
         | DMF(ap, at, ai) -> DMF(ap.[rowStart..rowFinish, colStart..colFinish], at.[rowStart..rowFinish, colStart..colFinish], ai)
-        | DMR(ap, _, _, _, ai) -> let cp = ap.[rowStart..rowFinish, colStart..colFinish] in DM.R(cp, Slice_DM(d, rowStart, colStart), ai)
+        | DMR(ap, _, _, ai) -> let cp = ap.[rowStart..rowFinish, colStart..colFinish] in DM.R(cp, Slice_DM(d, rowStart, colStart), ai)
 
     member d.GetSlice(row, colStart, colFinish) =
         let colStart = defaultArg colStart 0
@@ -1677,7 +1693,7 @@ and DM =
         match d with
         | DM(ap) -> DV(ap.[row, colStart..colFinish])
         | DMF(ap, at, ai) -> DVF(ap.[row, colStart..colFinish], at.[row, colStart..colFinish], ai)
-        | DMR(ap, _, _, _, ai) -> let cp = ap.[row, colStart..colFinish] in DV.R(cp, SliceRow_DM(d, row, colStart), ai)
+        | DMR(ap, _, _, ai) -> let cp = ap.[row, colStart..colFinish] in DV.R(cp, SliceRow_DM(d, row, colStart), ai)
 
     member d.GetSlice(rowStart, rowFinish, col) =
         let rowStart = defaultArg rowStart 0
@@ -1685,7 +1701,7 @@ and DM =
         match d with
         | DM(ap) -> DV(ap.[rowStart..rowFinish, col])
         | DMF(ap, at, ai) -> DVF(ap.[rowStart..rowFinish, col], at.[rowStart..rowFinish, col], ai)
-        | DMR(ap, _, _, _, ai) -> let cp = ap.[rowStart..rowFinish, col] in DV.R(cp, SliceCol_DM(d, rowStart, col), ai)
+        | DMR(ap, _, _, ai) -> let cp = ap.[rowStart..rowFinish, col] in DV.R(cp, SliceCol_DM(d, rowStart, col), ai)
 
     member d.GetRows() =
         seq {for i = 0 to d.Rows - 1 do yield d.[i, *]}
@@ -1742,7 +1758,7 @@ and DM =
             match x with
             | DM(p) -> p
             | DMF(xp, _, _) -> prec xp
-            | DMR(xp, _, _, _, _) -> prec xp
+            | DMR(xp, _, _, _) -> prec xp
         prec d
 
     static member toFloats(d:DM): GenMat =
@@ -1750,7 +1766,7 @@ and DM =
             match x with
             | DM(p) -> p
             | DMF(xp, _, _) -> prec xp
-            | DMR(xp, _, _, _, _) -> prec xp
+            | DMR(xp, _, _, _) -> prec xp
         prec d
 
     static member op_Explicit(d: GenMat) = DM(d)
@@ -1762,7 +1778,7 @@ and DM =
             let ap = a |> MatT.map (fun x -> x.P)
             let at = a |> MatT.map (fun x -> x.T)
             DMF(DM.OfMatD(ap), DM.OfMatD(at), ai)
-        | DR(_, _, _, _, ai) ->
+        | DR(_, _, _, ai) ->
             let ap = a |> MatT.map (fun x -> x.P)
             let cp = DM.OfMatD(ap) in DM.R(cp, Make_DM_ofMatD(a), ai)
 
@@ -1778,7 +1794,7 @@ and DM =
             let ap = a |> Array2D.map (fun x -> x.P)
             let at = a |> Array2D.map (fun x -> x.T)
             DMF(DM.OfArray2D(ap), DM.OfArray2D(at), ai)
-        | DR(_, _, _, _, ai) ->
+        | DR(_, _, _, ai) ->
             let ap = a |> Array2D.map (fun x -> x.P)
             let cp = DM.OfArray2D(ap) in DM.R(cp, Make_DM_ofDs(a), ai)
         #endif
@@ -1802,7 +1818,7 @@ and DM =
             let ap = s |> Seq.map (fun x -> x.P)
             let at = s |> Seq.map (fun x -> x.T)
             DMF(DM.OfRows(ap), DM.OfRows(at), ai)
-        | DVR(_, _, _, _, ai) ->
+        | DVR(_, _, _, ai) ->
             let ap = s |> Seq.map (fun x -> x.P)
             let cp = DM.OfRows(ap) in DM.R(cp, Make_DMRows_ofDVs(s |> Seq.toArray), ai)
         #endif
@@ -1811,33 +1827,33 @@ and DM =
         match a with
         | DV(ap) -> DM(Backend.RepeatReshapeCopy_V_MRows'(m, ap))
         | DVF(ap, at, ai) -> DMF(DM.OfRows(m, ap), DM.OfRows(m, at), ai)
-        | DVR(ap, _, _, _, ai) ->
+        | DVR(ap, _, _, ai) ->
             let cp = DM.OfRows(m, ap) in DM.R(cp, Make_DMRows_ofDV(a), ai)
 
     static member OfCols (n:int, a:DV) =
         match a with
         | DV(ap) -> DM(Backend.RepeatReshapeCopy_V_MCols'(n, ap))
         | DVF(ap, at, ai) -> DMF(DM.OfCols(n, ap), DM.OfCols(n, at), ai)
-        | DVR(ap, _, _, _, ai) ->
+        | DVR(ap, _, _, ai) ->
             let cp = DM.OfCols(n, ap) in DM.R(cp, Make_DMCols_ofDV(a), ai)
 
     static member inline Op_DM_DM (a, ff, fd, df, r) =
         match a with
         | DM(ap)                      -> DM(ff(ap))
         | DMF(ap, at, ai)             -> let cp = fd(ap) in DMF(cp, df(cp, ap, at), ai)
-        | DMR(ap, _, _, _, ai)            -> let cp = fd(ap) in DM.R(cp, r(a), ai)
+        | DMR(ap, _, _, ai)            -> let cp = fd(ap) in DM.R(cp, r(a), ai)
 
     static member inline Op_DM_DV (a, ff, fd, df, r) =
         match a with
         | DM(ap)                      -> DV(ff(ap))
         | DMF(ap, at, ai)             -> let cp = fd(ap) in DVF(cp, df(cp, ap, at), ai)
-        | DMR(ap, _, _, _, ai)            -> let cp = fd(ap) in DV.R(cp, r(a), ai)
+        | DMR(ap, _, _, ai)            -> let cp = fd(ap) in DV.R(cp, r(a), ai)
 
     static member inline Op_DM_D (a, ff, fd, df, r) =
         match a with
         | DM(ap)                      -> D(ff(ap))
         | DMF(ap, at, ai)             -> let cp = fd(ap) in DF(cp, df(cp, ap, at), ai)
-        | DMR(ap, _, _, _, ai)            -> let cp = fd(ap) in D.R(cp, r(a), ai)
+        | DMR(ap, _, _, ai)            -> let cp = fd(ap) in D.R(cp, r(a), ai)
 
     static member inline Op_DM_DM_DM (a, b, ff, fd, df_da, df_db, df_dab, r_d_d, r_d_c, r_c_d) =
         match a with
@@ -1845,7 +1861,7 @@ and DM =
             match b with
             | DM(bp)                  -> DM(ff(ap, bp))
             | DMF(bp, bt, bi)         -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi)
-            | DMR(bp, _, _, _, bi) -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
+            | DMR(bp, _, _, bi) -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
         | DMF(ap, at, ai) ->
             match b with
             | DM(_)                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai)
@@ -1854,12 +1870,12 @@ and DM =
                 | 0                   -> let cp = fd(ap, bp) in DMF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DMR(bp, _, _, _, bi) ->
+            | DMR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-        | DMR(ap, _, _, _, ai) ->
+        | DMR(ap, _, _, ai) ->
             match b with
             | DM(_)                   -> let cp = fd(ap, b) in DM.R(cp, r_d_c(a, b), ai)
             | DMF(bp, bt, bi) ->
@@ -1867,7 +1883,7 @@ and DM =
                 | -1                  -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DM.R(cp, r_d_c(a, b), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-            | DMR(bp, _, _, _, bi) ->
+            | DMR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                   -> let cp = fd(ap, bp) in DM.R(cp, r_d_d(a, b), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi) // ai < bi
@@ -1879,7 +1895,7 @@ and DM =
             match b with
             | D(bp)                   -> DM(ff(ap, bp))
             | DF(bp, bt, bi)          -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi)
-            | DR(bp, _, _, _, bi)  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
+            | DR(bp, _, _, bi)  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
         | DMF(ap, at, ai) ->
             match b with
             | D _                    -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai)
@@ -1888,12 +1904,12 @@ and DM =
                 | 0                   -> let cp = fd(ap, bp) in DMF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DR(bp, _, _, _, bi) ->
+            | DR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-        | DMR(ap, _, _, _, ai) ->
+        | DMR(ap, _, _, ai) ->
             match b with
             | D _                    -> let cp = fd(ap, b) in DM.R(cp, r_d_c(a, b), ai)
             | DF(bp, bt, bi) ->
@@ -1901,7 +1917,7 @@ and DM =
                 | -1                  -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DM.R(cp, r_d_c(a, b), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-            | DR(bp, _, _, _, bi) ->
+            | DR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                   -> let cp = fd(ap, bp) in DM.R(cp, r_d_d(a, b), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi) // ai < bi
@@ -1913,7 +1929,7 @@ and DM =
             match b with
             | DM(bp)                  -> DM(ff(ap, bp))
             | DMF(bp, bt, bi)         -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi)
-            | DMR(bp, _, _, _, bi) -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
+            | DMR(bp, _, _, bi) -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
         | DF(ap, at, ai) ->
             match b with
             | DM(_)                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai)
@@ -1922,12 +1938,12 @@ and DM =
                 | 0                   -> let cp = fd(ap, bp) in DMF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DMR(bp, _, _, _, bi) ->
+            | DMR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-        | DR(ap, _, _, _, ai) ->
+        | DR(ap, _, _, ai) ->
             match b with
             | DM(_)                   -> let cp = fd(ap, b) in DM.R(cp, r_d_c(a, b), ai)
             | DMF(bp, bt, bi) ->
@@ -1935,7 +1951,7 @@ and DM =
                 | -1                  -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DM.R(cp, r_d_c(a, b), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-            | DMR(bp, _, _, _, bi) ->
+            | DMR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                   -> let cp = fd(ap, bp) in DM.R(cp, r_d_d(a, b), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi) // ai < bi
@@ -1947,7 +1963,7 @@ and DM =
             match b with
             | DV(bp)                  -> DV(ff(ap, bp))
             | DVF(bp, bt, bi)         -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi)
-            | DVR(bp, _, _, _, bi) -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi)
+            | DVR(bp, _, _, bi) -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi)
         | DMF(ap, at, ai) ->
             match b with
             | DV _                   -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai)
@@ -1956,12 +1972,12 @@ and DM =
                 | 0                   -> let cp = fd(ap, bp) in DVF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                   -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DVR(bp, _, _, _, bi) ->
+            | DVR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                  -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-        | DMR(ap, _, _, _, ai) ->
+        | DMR(ap, _, _, ai) ->
             match b with
             | DV _                   -> let cp = fd(ap, b) in DV.R(cp, r_d_c(a, b), ai)
             | DVF(bp, bt, bi) ->
@@ -1969,7 +1985,7 @@ and DM =
                 | -1                  -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DV.R(cp, r_d_c(a, b), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-            | DVR(bp, _, _, _, bi) ->
+            | DVR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                   -> let cp = fd(ap, bp) in DV.R(cp, r_d_d(a, b), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi) // ai < bi
@@ -1981,7 +1997,7 @@ and DM =
             match b with
             | DM(bp)                  -> DV(ff(ap, bp))
             | DMF(bp, bt, bi)         -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi)
-            | DMR(bp, _, _, _, bi) -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi)
+            | DMR(bp, _, _, bi) -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi)
         | DVF(ap, at, ai) ->
             match b with
             | DM(_)                   -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai)
@@ -1990,12 +2006,12 @@ and DM =
                 | 0                   -> let cp = fd(ap, bp) in DVF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                   -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DMR(bp, _, _, _, bi) ->
+            | DMR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                  -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-        | DVR(ap, _, _, _, ai) ->
+        | DVR(ap, _, _, ai) ->
             match b with
             | DM(_)                   -> let cp = fd(ap, b) in DV.R(cp, r_d_c(a, b), ai)
             | DMF(bp, bt, bi) ->
@@ -2003,7 +2019,7 @@ and DM =
                 | -1                  -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DV.R(cp, r_d_c(a, b), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-            | DMR(bp, _, _, _, bi) ->
+            | DMR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                   -> let cp = fd(ap, bp) in DV.R(cp, r_d_d(a, b), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi) // ai < bi
@@ -2015,7 +2031,7 @@ and DM =
             match b with
             | DV(bp)                  -> DM(ff(ap, bp))
             | DVF(bp, bt, bi)         -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi)
-            | DVR(bp, _, _, _, bi) -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
+            | DVR(bp, _, _, bi) -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
         | DMF(ap, at, ai) ->
             match b with
             | DV _                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai)
@@ -2024,12 +2040,12 @@ and DM =
                 | 0                   -> let cp = fd(ap, bp) in DMF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DVR(bp, _, _, _, bi) ->
+            | DVR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-        | DMR(ap, _, _, _, ai) ->
+        | DMR(ap, _, _, ai) ->
             match b with
             | DV _                   -> let cp = fd(ap, b) in DM.R(cp, r_d_c(a, b), ai)
             | DVF(bp, bt, bi) ->
@@ -2037,7 +2053,7 @@ and DM =
                 | -1                  -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DM.R(cp, r_d_c(a, b), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-            | DVR(bp, _, _, _, bi) ->
+            | DVR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                   -> let cp = fd(ap, bp) in DM.R(cp, r_d_d(a, b), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi) // ai < bi
@@ -2049,7 +2065,7 @@ and DM =
             match b with
             | DM(bp)                  -> DM(ff(ap, bp))
             | DMF(bp, bt, bi)         -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi)
-            | DMR(bp, _, _, _, bi) -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
+            | DMR(bp, _, _, bi) -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
         | DVF(ap, at, ai) ->
             match b with
             | DM(_)                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai)
@@ -2058,12 +2074,12 @@ and DM =
                 | 0                   -> let cp = fd(ap, bp) in DMF(cp, df_dab(cp, ap, at, bp, bt), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | _                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai) // ai > bi
-            | DMR(bp, _, _, _, bi) ->
+            | DMR(bp, _, _, bi) ->
                 match compare ai bi with
                 | -1                  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-        | DVR(ap, _, _, _, ai) ->
+        | DVR(ap, _, _, ai) ->
             match b with
             | DM(_)                   -> let cp = fd(ap, b) in DM.R(cp, r_d_c(a, b), ai)
             | DMF(bp, bt, bi) ->
@@ -2071,7 +2087,7 @@ and DM =
                 | -1                  -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi) // ai < bi
                 | 1                   -> let cp = fd(ap, b) in DM.R(cp, r_d_c(a, b), ai) // ai > bi
                 | _                   -> failwith "Forward and reverse AD cannot run on the same level."
-            | DMR(bp, _, _, _, bi) ->
+            | DMR(bp, _, _, bi) ->
                 match compare ai bi with
                 | 0                   -> let cp = fd(ap, bp) in DM.R(cp, r_d_d(a, b), ai) // ai = bi
                 | -1                  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi) // ai < bi
@@ -3509,10 +3525,10 @@ module DOps =
             match d with
             | :? D as d ->
                 match d with
-                | DR(_ , dARef, o, dFanOutRef, _) ->
-                    dARef.Value <- D.Zero
-                    dFanOutRef.Value <- dFanOutRef.Value + 1u
-                    if dFanOutRef.Value = 1u then
+                | DR(_, st, o, _) ->
+                    st.A <- D.Zero
+                    st.F <- st.F + 1u
+                    if st.F = 1u then
                         match o with
                         | Add_D_D(a, b) -> push (bxd b); push (bxd a)
                         | Add_D_DCons(a) -> push (bxd a)
@@ -3568,13 +3584,13 @@ module DOps =
                 | _ -> ()
             | :? DV as d ->
                 match d with
-                | DVR(dPrimal, dARef, o, dFanOutRef, _) ->
+                | DVR(dPrimal, st, o, _) ->
                     // Zero the buffer already there rather than allocating a new one.
                     // Only for a plain `DV` of the right length: under nested AD the
                     // ref can hold a `DVF` carrying a tangent, and mutating that in
                     // place would corrupt it. Callers get a copy from `adjoint`, so
                     // reuse here is invisible to them.
-                    match dARef.Value with
+                    match st.A with
                     | DV a when a.Length = dPrimal.Length ->
 #if !FABLE_COMPILER
                         System.Array.Clear(a, 0, a.Length)
@@ -3582,9 +3598,9 @@ module DOps =
                         for i in 0 .. a.Length - 1 do
                             a.[i] <- 0.
 #endif
-                    | _ -> dARef.Value <- DV.ZeroN dPrimal.Length
-                    dFanOutRef.Value <- dFanOutRef.Value + 1u
-                    if dFanOutRef.Value = 1u then
+                    | _ -> st.A <- DV.ZeroN dPrimal.Length
+                    st.F <- st.F + 1u
+                    if st.F = 1u then
                         match o with
                         | Add_DV_DV(a, b) -> push (bxd b); push (bxd a)
                         | Add_DV_DVCons(a) -> push (bxd a)
@@ -3684,10 +3700,10 @@ module DOps =
                 | _ -> ()
             | :? DM as d ->
                 match d with
-                | DMR(_, dARef, o, dFanOutRef, _) ->
+                | DMR(_, st, o, _) ->
                     // As for `DV` above. `DM.ZeroMN` and `GenMat.addM` only ever
                     // produce `ColMajor`, so that is the only shape worth reusing.
-                    match dARef.Value with
+                    match st.A with
                     | DM(ColMajor m) when m.NRows = d.Rows && m.NCols = d.Cols ->
 #if !FABLE_COMPILER
                         System.Array.Clear(m.Data, 0, m.Data.Length)
@@ -3695,9 +3711,9 @@ module DOps =
                         for i in 0 .. m.Data.Length - 1 do
                             m.Data.[i] <- 0.
 #endif
-                    | _ -> dARef.Value <- DM.ZeroMN d.Rows d.Cols
-                    dFanOutRef.Value <- dFanOutRef.Value + 1u
-                    if dFanOutRef.Value = 1u then
+                    | _ -> st.A <- DM.ZeroMN d.Rows d.Cols
+                    st.F <- st.F + 1u
+                    if st.F = 1u then
                         match o with
                         | Add_DM_DM(a, b) -> push (bxd b); push (bxd a)
                         | Add_DM_DMCons(a) -> push (bxd a)
@@ -3830,12 +3846,12 @@ module DOps =
             match d, v with
             | (:? D as d), (:? D as v) ->
                 match d with
-                | DR(_, dARef, o, dFanOutRef, _) ->
-                    dFanOutRef.Value <- dFanOutRef.Value - 1u
-                    dARef.Value <- dARef.Value + v
-                    let dA = dARef.Value
+                | DR(_, st, o, _) ->
+                    st.F <- st.F - 1u
+                    st.A <- st.A + v
+                    let dA = st.A
                     // If all incoming parts of the adjoint have been received, then proceed to the children
-                    if dFanOutRef.Value = 0u then
+                    if st.F = 0u then
                         match o with
                         | Add_D_D(a, b) -> push2 (bx dA a) (bx dA b)
                         | Add_D_DCons(a) -> push (bx dA a)
@@ -3918,16 +3934,16 @@ module DOps =
 
             | (:? DV as d), (:? DV as v) ->
                 match d with
-                | DVR(_, dARef, o, dFanOutRef, _) ->
-                    dFanOutRef.Value <- dFanOutRef.Value - 1u
+                | DVR(_, st, o, _) ->
+                    st.F <- st.F - 1u
                     // Accumulate into the buffer reset left in place instead of allocating
                     // a fresh vector per contribution. `Add_V_V_Inplace` is destructive of
                     // its *second* argument and shares `(+)`'s dispatch otherwise, so the
                     // nested-AD cases (`DVF`/`DVR` on either side) still allocate as before.
-                    dARef.Value <- DV.Add_V_V_Inplace(v, dARef.Value)
-                    let dA = dARef.Value
+                    st.A <- DV.Add_V_V_Inplace(v, st.A)
+                    let dA = st.A
                     // If all incoming parts of the adjoint have been received, then proceed to the children
-                    if dFanOutRef.Value = 0u then
+                    if st.F = 0u then
                         match o with
                         | Add_DV_DV(a, b) -> push2 (bxv dA a) (bxv dA b)
                         | Add_DV_DVCons(a) -> push (bxv dA a)
@@ -4057,15 +4073,15 @@ module DOps =
 
             | (:? DM as d), (:? DM as v) ->
                 match d with
-                | DMR(_, dARef, o, dFanOutRef, _) ->
-                    dFanOutRef.Value <- dFanOutRef.Value - 1u
+                | DMR(_, st, o, _) ->
+                    st.F <- st.F - 1u
                     // As for `DV` above. The destination is the post-reset buffer, always
                     // `ColMajor` — the only shape `AlphaAdd_M_M_Inplace'` updates in place —
                     // while the source side goes through `GenMat.toMat`, which takes any.
-                    dARef.Value <- DM.Add_M_M_Inplace(v, dARef.Value)
-                    let dA = dARef.Value
+                    st.A <- DM.Add_M_M_Inplace(v, st.A)
+                    let dA = st.A
                     // If all incoming parts of the adjoint have been received, then proceed to the children
-                    if dFanOutRef.Value = 0u then
+                    if st.F = 0u then
                         match o with
                         | Add_DM_DM(a, b) -> push2 (bxm dA a) (bxm dA b)
                         | Add_DM_DMCons(a) -> push (bxm dA a)
