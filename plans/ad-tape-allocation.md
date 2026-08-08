@@ -2,8 +2,9 @@
 
 **Status: steps 1 and 2 landed 2026-08-07 (PR #18); step 4 followed the same
 day — see the step-4 section at the end. Step 3 is done as option (d) of
-`ad-allocation-redesign.md`, which now carries the direction; next is the
-gather op (`ad-gather.md`).**
+`ad-allocation-redesign.md`, which now carries the direction; the gather op
+(`ad-gather.md`) is implemented and verified, awaiting the Analytics adoption
+PR after release.**
 
 History: diagnosed 2026-08-05 with a harness (`consoles/BenchmarkAdTape`) and
 the cause confirmed at three specific lines. Step 1, the `adjoint`/`.A` consumer

@@ -112,3 +112,46 @@ type AdTapeBenchmark() =
     for _ in 1 .. Graph.SeedPasses do
       reverseProp (D.One :> dobj) (root :> dobj)
     x |> adjoint: DV
+
+
+/// The `InterpolateV` shape (`Graph.GatherShape`), selection-CSR versus gather,
+/// forward-only and with one reverse pass. `c0`/`c1` are `makeReverse`'d per
+/// invocation, as `CurveSolver` would hold them. Read `Allocated`, as above;
+/// `-- gather` is the fast runner for the same shape and also asserts bit
+/// parity between the two formulations.
+[<MemoryDiagnoser>]
+type GatherBenchmark() =
+
+  let seed = DV (Array.create Graph.GatherShape.n 1.0)
+
+  [<Benchmark(Baseline = true)>]
+  member _.CsrForward() =
+    let i = WldMr.Numerics.DiffSharp.Util.GlobalTagger.Next
+    let c0 = DV Graph.GatherShape.c0f |> makeReverse i
+    let c1 = DV Graph.GatherShape.c1f |> makeReverse i
+    Graph.GatherShape.interpolateCsr c0 c1
+
+  [<Benchmark>]
+  member _.GatherForward() =
+    let i = WldMr.Numerics.DiffSharp.Util.GlobalTagger.Next
+    let c0 = DV Graph.GatherShape.c0f |> makeReverse i
+    let c1 = DV Graph.GatherShape.c1f |> makeReverse i
+    Graph.GatherShape.interpolateGather c0 c1
+
+  [<Benchmark>]
+  member _.CsrForwardAndReverse() =
+    let i = WldMr.Numerics.DiffSharp.Util.GlobalTagger.Next
+    let c0 = DV Graph.GatherShape.c0f |> makeReverse i
+    let c1 = DV Graph.GatherShape.c1f |> makeReverse i
+    let y = Graph.GatherShape.interpolateCsr c0 c1
+    reverseProp (seed :> dobj) (y :> dobj)
+    struct ((c0 |> adjoint: DV), (c1 |> adjoint: DV))
+
+  [<Benchmark>]
+  member _.GatherForwardAndReverse() =
+    let i = WldMr.Numerics.DiffSharp.Util.GlobalTagger.Next
+    let c0 = DV Graph.GatherShape.c0f |> makeReverse i
+    let c1 = DV Graph.GatherShape.c1f |> makeReverse i
+    let y = Graph.GatherShape.interpolateGather c0 c1
+    reverseProp (seed :> dobj) (y :> dobj)
+    struct ((c0 |> adjoint: DV), (c1 |> adjoint: DV))

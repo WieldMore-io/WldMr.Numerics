@@ -10,6 +10,8 @@ module WldMr.Numerics.DiffSharp.Tests.AD.Float64
 open FsCheck.NUnit
 open WldMr.Numerics.DiffSharp.Tests
 open WldMr.Numerics.DiffSharp.AD.Float64
+open WldMr.Numerics.LinAlg
+open WldMr.Numerics.LinAlg.CsrMat
 
 [<Property>]
 let ``FixedPoint forward``() =
@@ -67,3 +69,61 @@ let ``Gradient descent (with arrays)``() =
         cos x'.[0,0]
 
     minimize lossFunction (DV.createOfFloat (n*n) 1.0) //Smoke test
+
+
+[<Property>]
+let ``Gather reverse gradient matches finite differences``(v0: float[], w0: float[], ks0: int[]) =
+    let v = v0 |> Array.map (fun x -> if Util.IsNice(x) then x % 10. else 1.0)
+    if v.Length = 0 || ks0.Length = 0 then true
+    else
+        // abs after %, so Int32.MinValue cannot overflow
+        let ks = ks0 |> Array.map (fun k -> abs (k % v.Length))
+        let w = Array.init ks.Length (fun i -> if i < w0.Length && Util.IsNice(w0.[i]) then w0.[i] % 10. else 1.0)
+        // Linear in v, so a weighted-sum probe covers the whole Jacobian and the
+        // forward-difference reference is exact up to rounding.
+        let gAD = grad (fun (u: DV) -> DV.Sum(DV.Gather(u, ks) .* DV w)) (DV v) |> DV.toFloats
+        let fN (u: float[]) = Seq.init ks.Length (fun i -> u.[ks.[i]] * w.[i]) |> Seq.sum
+        let gN = WldMr.Numerics.DiffSharp.Numerical.Float64.DiffOps.grad fN v
+        Util.(=~)(gAD, gN)
+
+[<Property>]
+let ``Gather equals the CSR selection-matrix formulation exactly``(c0: float[], ks0: int[]) =
+    // The in-repo canary for the InterpolateV rewrite (plans/ad-gather.md §7):
+    // the gather formulation must produce bit-identical primals and reverse
+    // gradients to the selection-CSR one it replaces. `=`, not `=~`, deliberately.
+    let c = if c0.Length = 0 then [| 1.0 |] else c0 |> Array.map (fun x -> if Util.IsNice(x) then x % 10. else 1.0)
+    let m = c.Length
+    if ks0.Length = 0 then true
+    else
+        // sorted, because the hand-built CSR transpose requires non-decreasing ks;
+        // gather itself does not care
+        let ks = ks0 |> Array.map (fun k -> abs (k % m)) |> Array.sort
+        let n = ks.Length
+        // the selection matrix and its transpose, exactly as WldMr.Analytics'
+        // InterpolateV builds them
+        let csrS =
+            { Values = Array.create n 1.; Columns = ks
+              RowIndices = Array.init (n + 1) id; NCols = m }
+        let csrST =
+            let colIndices = Array.zeroCreate (m + 1)
+            let mutable ksIdx = 0
+            for i in 0 .. m - 1 do
+                while ksIdx < n && i >= ks.[ksIdx] do ksIdx <- ksIdx + 1
+                colIndices.[i + 1] <- ksIdx
+            { Values = Array.create n 1.; Columns = Array.init n id
+              RowIndices = colIndices; NCols = n }
+        let seed = DV (Array.init n (fun i -> float (i % 7) - 3.0))
+
+        let ca = DV c |> makeReverse WldMr.Numerics.DiffSharp.Util.GlobalTagger.Next
+        let yA : DV = DM (SparseDouble (csrS, csrST)) * ca
+        yA |> reverseProp seed
+        let pA = yA |> primal |> DV.toFloats
+        let gA = ca |> adjoint |> DV.toFloats
+
+        let cb = DV c |> makeReverse WldMr.Numerics.DiffSharp.Util.GlobalTagger.Next
+        let yB = DV.Gather(cb, ks)
+        yB |> reverseProp seed
+        let pB = yB |> primal |> DV.toFloats
+        let gB = cb |> adjoint |> DV.toFloats
+
+        pA = pB && gA = gB
