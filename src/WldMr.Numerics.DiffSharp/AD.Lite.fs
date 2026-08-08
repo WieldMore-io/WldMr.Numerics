@@ -3493,9 +3493,13 @@ module DOps =
             | :? D as d ->
                 match d with
                 | DR(_, st, o, _) ->
-                    st.A <- D.Zero
+                    // Zeroing belongs on the FIRST visit only, which is the branch
+                    // below -- a node is visited once per incoming edge, and visits
+                    // 2..fanOut used to re-zero an adjoint the first visit had
+                    // already zeroed. See the `DV` arm for what that cost.
                     st.F <- st.F + 1u
                     if st.F = 1u then
+                        st.A <- D.Zero
                         match o with
                         | Add_D_D(a, b) -> push (bxd b); push (bxd a)
                         | Add_D_DCons(a) -> push (bxd a)
@@ -3552,22 +3556,29 @@ module DOps =
             | :? DV as d ->
                 match d with
                 | DVR(dPrimal, st, o, _) ->
-                    // Zero the buffer already there rather than allocating a new one.
-                    // Only for a plain `DV` of the right length: under nested AD the
-                    // adjoint can hold a `DVF` carrying a tangent, and mutating that in
-                    // place would corrupt it. Callers get a copy from `adjoint`, so
-                    // reuse here is invisible to them.
-                    match st.A with
-                    | DV a when a.Length = dPrimal.Length ->
-#if !FABLE_COMPILER
-                        System.Array.Clear(a, 0, a.Length)
-#else
-                        for i in 0 .. a.Length - 1 do
-                            a.[i] <- 0.
-#endif
-                    | _ -> st.A <- DV.ZeroN dPrimal.Length
+                    // A node is visited once per incoming edge. Zeroing on every visit
+                    // meant a type test, a length check and an `Array.Clear` over a
+                    // buffer the first visit had already zeroed -- 20,436 redundant
+                    // clears a MarketBuild fit against 20,096 real ones, so half of
+                    // this work did nothing. `st.F = 1u` already identifies the first
+                    // visit, so the zeroing moves into that branch rather than needing
+                    // a guard of its own.
                     st.F <- st.F + 1u
                     if st.F = 1u then
+                        // Zero the buffer already there rather than allocating a new one.
+                        // Only for a plain `DV` of the right length: under nested AD the
+                        // adjoint can hold a `DVF` carrying a tangent, and mutating that in
+                        // place would corrupt it. Callers get a copy from `adjoint`, so
+                        // reuse here is invisible to them.
+                        match st.A with
+                        | DV a when a.Length = dPrimal.Length ->
+#if !FABLE_COMPILER
+                            System.Array.Clear(a, 0, a.Length)
+#else
+                            for i in 0 .. a.Length - 1 do
+                                a.[i] <- 0.
+#endif
+                        | _ -> st.A <- DV.ZeroN dPrimal.Length
                         match o with
                         | Add_DV_DV(a, b) -> push (bxd b); push (bxd a)
                         | Add_DV_DVCons(a) -> push (bxd a)
@@ -3668,19 +3679,20 @@ module DOps =
             | :? DM as d ->
                 match d with
                 | DMR(_, st, o, _) ->
-                    // As for `DV` above. `DM.ZeroMN` and `GenMat.addM` only ever
-                    // produce `ColMajor`, so that is the only shape worth reusing.
-                    match st.A with
-                    | DM(ColMajor m) when m.NRows = d.Rows && m.NCols = d.Cols ->
-#if !FABLE_COMPILER
-                        System.Array.Clear(m.Data, 0, m.Data.Length)
-#else
-                        for i in 0 .. m.Data.Length - 1 do
-                            m.Data.[i] <- 0.
-#endif
-                    | _ -> st.A <- DM.ZeroMN d.Rows d.Cols
+                    // First visit only, as for `DV` above.
                     st.F <- st.F + 1u
                     if st.F = 1u then
+                        // `DM.ZeroMN` and `GenMat.addM` only ever produce `ColMajor`,
+                        // so that is the only shape worth reusing.
+                        match st.A with
+                        | DM(ColMajor m) when m.NRows = d.Rows && m.NCols = d.Cols ->
+#if !FABLE_COMPILER
+                            System.Array.Clear(m.Data, 0, m.Data.Length)
+#else
+                            for i in 0 .. m.Data.Length - 1 do
+                                m.Data.[i] <- 0.
+#endif
+                        | _ -> st.A <- DM.ZeroMN d.Rows d.Cols
                         match o with
                         | Add_DM_DM(a, b) -> push (bxd b); push (bxd a)
                         | Add_DM_DMCons(a) -> push (bxd a)
