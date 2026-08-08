@@ -151,8 +151,8 @@ let nodeCount (spec: GraphSpec) = 1 + spec.Depth * 7 + 1
 
 /// `float` slots a single `reverseReset` writes as zero, summed over the tape.
 ///
-/// `resetRec` does `dARef.Value <- DV.ZeroN dPrimal.Length` per `DVR`
-/// (`AD.Lite.fs:3428`), so if the per-node-zero-vector reading is right, one
+/// `reverseReset` does `st.A <- DV.ZeroN dPrimal.Length` per `DVR` on the
+/// shape-mismatch arm, so if the per-node-zero-vector reading is right, one
 /// reset allocates at least `8 *` this many bytes plus an object header a node.
 /// Measured reset bytes divided by that floor is the number that confirms or
 /// kills the hypothesis — `Phases.phases` prints the ratio.

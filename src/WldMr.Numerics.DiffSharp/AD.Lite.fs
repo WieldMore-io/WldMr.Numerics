@@ -38,16 +38,19 @@ module N =
     let inline log10Val<'T>              = log10ValFloat64
 
 /// Reverse-mode state of one tape node: the accumulated adjoint and the fan-out
-/// counter, in one mutable object.
+/// counter, in one mutable object rather than two `ref` cells. Two words that are
+/// only ever read and written together cost one allocation, not two -- worth 4.2%
+/// of a MarketBuild fit; `plans/ad-allocation-redesign.md` has the arithmetic.
 ///
-/// These were two separate `ref` cells. Every reverse node therefore paid two
-/// allocations to hold two words that are only ever read and written together --
-/// 66,604 cells a MarketBuild fit against 33,320 nodes, 8.3% of everything the fit
-/// allocated. Merging them halves that and takes a node from 4 construction objects
-/// to 3.
+/// A class, so it compares by reference where the `ref` pair compared structurally.
+/// That is the intended semantics -- mutable tape bookkeeping should not take part
+/// in the value equality of the `DV`/`DM` node holding it -- but it IS a change, and
+/// those two get compiler-generated equality that silently picked it up.
+[<Sealed>]
 type NodeState<'T>(a: 'T) =
-    /// Accumulated adjoint. Seeded with the type's shared empty sentinel and
-    /// materialised to the right shape by `reverseReset` -- see `DV.R`.
+    /// Accumulated adjoint. For `DV`/`DM` this is seeded with the type's shared empty
+    /// sentinel and materialised to the right shape on first reset (see `DV.R`); for
+    /// `D` the seed is already the right shape and nothing is ever materialised.
     member val A = a with get, set
     /// Fan-out counter: incremented by `reverseReset` per incoming edge, decremented
     /// by `reverseProp` per contribution, and the node fires when it reaches zero.
@@ -106,20 +109,7 @@ type D =
             match d with
             | D _ -> ()
             | DF _ -> failwith "Cannot set adjoint value of DF."
-            | DR (_, st, _, _) -> st.A <- v
-
-    /// Fan-out counter of this D
-    member d.F
-        with get() =
-            match d with
-            | D _ -> failwith "Cannot get fan-out value of D."
-            | DF _ -> failwith "Cannot get fan-out value of DF."
-            | DR (_, st, _, _) -> st.F
-        and set(v) =
-            match d with
-            | D _ -> failwith "Cannot set fan-out value of D."
-            | DF _ -> failwith "Cannot set fan-out value of DF."
-            | DR (_, st, _, _) -> st.F <- v
+            | DR(_, st, _, _) -> st.A <- v
 
     member d.GetForward(t:D, i:uint32) = DF(d, t, i)
 
@@ -176,7 +166,7 @@ type D =
         match a with
         | D(ap)                    -> D(ff(ap))
         | DF(ap, at, ai)           -> let cp = fd(ap) in DF(cp, df(cp, ap, at), ai)
-        | DR(ap, _, _, ai)      -> D.R(fd(ap), r(a), ai)
+        | DR(ap, _, _, ai)         -> D.R(fd(ap), r(a), ai)
 
     static member inline Op_D_D_D (a, b, [<InlineIfLambda>]ff, fd, df_da, df_db, df_dab, r_d_d, r_d_c, r_c_d) =
         match a with
@@ -184,7 +174,7 @@ type D =
             match b with
             | D(bp)                  -> D(ff(ap, bp))
             | DF(bp, bt, bi)         -> let cp = fd(a, bp) in DF(cp, df_db(cp, bp, bt), bi)
-            | DR(bp, _, _, bi)   -> D.R(fd(a, bp), r_c_d(a, b), bi)
+            | DR(bp, _, _, bi)       -> D.R(fd(a, bp), r_c_d(a, b), bi)
         | DF(ap, at, ai) ->
             match b with
             | D _                   -> let cp = fd(ap, b) in DF(cp, df_da(cp, ap, at), ai)
@@ -530,9 +520,12 @@ type D =
 /// Vector numeric type keeping dual numbers for forward mode and adjoints and tapes for reverse mode AD, with nesting
 /// capability, using tags to avoid perturbation confusion
 and DV =
-    | DV of number[] // Primal
-    | DVF of DV * DV * uint32 // Primal, tangent, layer tag
-    | DVR of primal: DV * state: NodeState<DV> * TraceOp * uint32 // Primal, adjoint + fan-out state, parent operation, tag
+    /// Primal
+    | DV of number[]
+    /// Primal, tangent, layer tag (for forward mode)
+    | DVF of DV * DV * uint32
+    /// Primal, parent, layer tag (for reverse mode)
+    | DVR of primal: DV * state: NodeState<DV> * parentOperation: TraceOp * tag: uint32
 
     interface dobj
 
@@ -571,19 +564,6 @@ and DV =
             | DV _ -> ()
             | DVF _ -> failwith "Cannot set adjoint value of DVF."
             | DVR(_, st, _, _) -> st.A <- v
-
-    /// Fan-out counter of this DV
-    member d.F
-        with get() =
-            match d with
-            | DV _ -> failwith "Cannot get fan-out value of DV."
-            | DVF _ -> failwith "Cannot get fan-out value of DVF."
-            | DVR(_, st, _, _) -> st.F
-        and set(v) =
-            match d with
-            | DV _ -> failwith "Cannot set fan-out value of DV."
-            | DVF _ -> failwith "Cannot set fan-out value of DVF."
-            | DVR(_, st, _, _) -> st.F <- v
 
     /// Convert to use forward AD at this layer
     member d.GetForward(t:DV, i:uint32) = DVF(d, t, i)
@@ -728,19 +708,19 @@ and DV =
         match a with
         | DV(ap)                      -> DV(ff(ap))
         | DVF(ap, at, ai)             -> let cp = fd(ap) in DVF(cp, df(cp, ap, at), ai)
-        | DVR(ap, _, _, ai)            -> let cp = fd(ap) in DV.R(cp, r(a), ai)
+        | DVR(ap, _, _, ai)           -> let cp = fd(ap) in DV.R(cp, r(a), ai)
 
     static member inline Op_DV_DM (a, ff, fd, df, r) =
         match a with
         | DV(ap)                      -> DM(ff(ap))
         | DVF(ap, at, ai)             -> let cp = fd(ap) in DMF(cp, df(cp, ap, at), ai)
-        | DVR(ap, _, _, ai)            -> let cp = fd(ap) in DM.R(cp, r(a), ai)
+        | DVR(ap, _, _, ai)           -> let cp = fd(ap) in DM.R(cp, r(a), ai)
 
     static member inline Op_DV_D (a, ff, fd, df, r) =
         match a with
         | DV(ap)                      -> D(ff(ap))
         | DVF(ap, at, ai)             -> let cp = fd(ap) in DF(cp, df(cp, ap, at), ai)
-        | DVR(ap, _, _, ai)            -> let cp = fd(ap) in D.R(cp, r(a), ai)
+        | DVR(ap, _, _, ai)           -> let cp = fd(ap) in D.R(cp, r(a), ai)
 
     static member inline Op_DV_DV_DV (a, b, [<InlineIfLambda>]ff, fd, df_da, df_db, df_dab, r_d_d, r_d_c, r_c_d) =
         match a with
@@ -850,7 +830,7 @@ and DV =
             match b with
             | D(bp)                   -> DV(ff(ap, bp))
             | DF(bp, bt, bi)          -> let cp = fd(a, bp) in DVF(cp, df_db(cp, bp, bt), bi)
-            | DR(bp, _, _, bi)  -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi)
+            | DR(bp, _, _, bi)        -> let cp = fd(a, bp) in DV.R(cp, r_c_d(a, b), bi)
         | DVF(ap, at, ai) ->
             match b with
             | D _                    -> let cp = fd(ap, b) in DVF(cp, df_da(cp, ap, at), ai)
@@ -1630,19 +1610,6 @@ and DM =
             | DMF _ -> failwith "Cannot set adjoint value of DMF."
             | DMR(_, st, _, _) -> st.A <- v
 
-    /// Fan-out value of this DM
-    member d.F
-        with get() =
-            match d with
-            | DM _ -> failwith "Cannot get fan-out value of DM."
-            | DMF _ -> failwith "Cannot get fan-out value of DMF."
-            | DMR(_, st, _, _) -> st.F
-        and set(v) =
-            match d with
-            | DM _ -> failwith "Cannot set fan-out value of DM."
-            | DMF _ -> failwith "Cannot set fan-out value of DMF."
-            | DMR(_, st, _, _) -> st.F <- v
-
     member d.GetForward(t:DM, i:uint32) = DMF(d, t, i)
 
     member d.GetReverse(i:uint32) = DM.R(d, Noop, i)
@@ -1841,19 +1808,19 @@ and DM =
         match a with
         | DM(ap)                      -> DM(ff(ap))
         | DMF(ap, at, ai)             -> let cp = fd(ap) in DMF(cp, df(cp, ap, at), ai)
-        | DMR(ap, _, _, ai)            -> let cp = fd(ap) in DM.R(cp, r(a), ai)
+        | DMR(ap, _, _, ai)           -> let cp = fd(ap) in DM.R(cp, r(a), ai)
 
     static member inline Op_DM_DV (a, ff, fd, df, r) =
         match a with
         | DM(ap)                      -> DV(ff(ap))
         | DMF(ap, at, ai)             -> let cp = fd(ap) in DVF(cp, df(cp, ap, at), ai)
-        | DMR(ap, _, _, ai)            -> let cp = fd(ap) in DV.R(cp, r(a), ai)
+        | DMR(ap, _, _, ai)           -> let cp = fd(ap) in DV.R(cp, r(a), ai)
 
     static member inline Op_DM_D (a, ff, fd, df, r) =
         match a with
         | DM(ap)                      -> D(ff(ap))
         | DMF(ap, at, ai)             -> let cp = fd(ap) in DF(cp, df(cp, ap, at), ai)
-        | DMR(ap, _, _, ai)            -> let cp = fd(ap) in D.R(cp, r(a), ai)
+        | DMR(ap, _, _, ai)           -> let cp = fd(ap) in D.R(cp, r(a), ai)
 
     static member inline Op_DM_DM_DM (a, b, ff, fd, df_da, df_db, df_dab, r_d_d, r_d_c, r_c_d) =
         match a with
@@ -1895,7 +1862,7 @@ and DM =
             match b with
             | D(bp)                   -> DM(ff(ap, bp))
             | DF(bp, bt, bi)          -> let cp = fd(a, bp) in DMF(cp, df_db(cp, bp, bt), bi)
-            | DR(bp, _, _, bi)  -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
+            | DR(bp, _, _, bi)        -> let cp = fd(a, bp) in DM.R(cp, r_c_d(a, b), bi)
         | DMF(ap, at, ai) ->
             match b with
             | D _                    -> let cp = fd(ap, b) in DMF(cp, df_da(cp, ap, at), ai)
@@ -3587,7 +3554,7 @@ module DOps =
                 | DVR(dPrimal, st, o, _) ->
                     // Zero the buffer already there rather than allocating a new one.
                     // Only for a plain `DV` of the right length: under nested AD the
-                    // ref can hold a `DVF` carrying a tangent, and mutating that in
+                    // adjoint can hold a `DVF` carrying a tangent, and mutating that in
                     // place would corrupt it. Callers get a copy from `adjoint`, so
                     // reuse here is invisible to them.
                     match st.A with
