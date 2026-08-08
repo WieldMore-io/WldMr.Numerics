@@ -1,7 +1,26 @@
 # A first-class reverse-mode `gather` for `DV`
 
-**Status: design, 2026-08-07. Nothing implemented. Written against master at
-`1af3889` ("accumulate adjoints in place on reverse push").**
+**Status: implemented 2026-08-07 on the `ad-lazy-adjoint-init` branch. §1–§2
+and §4–§6 landed as designed; §3, the `InterpolateV` rewrite, was verified as a
+working-tree preview against the local feed and reverted — it ships as the
+Analytics adoption PR once a release carries the op.**
+
+Measured with the preview live: all 445 + 222 downstream tests green, the
+MarketBuild fingerprint **byte-identical** cross-process (§7 held end-to-end),
+whole fit **54.7 → 50.0 MB** (−8.6%), the saving inside
+`fitOisCurves`/`fitLocalSpreadCurves`/`bondCurves`. In-repo (BDN): gather is
+**2.4x faster and 33% lighter** than the CSR formulation forward (1.79 vs
+4.24 µs, 16.1 vs 24.0 KB), reverse a wash by design; `-- gather` asserts bit
+parity on every run.
+
+Two corrections earned in practice: `MochaFlip.isTrue` existed only for JS and
+needed adding to the Python branch (the CLAUDE.md both-branches rule); and §1's
+"one integer compare per element … noise" was false as first written —
+per-element `.Length` property calls made validation cost more than the matvec
+it replaced. Validation now hoists the bound and runs only in the public entry,
+with a private `*NoCheck` core for the op's own primal/tangent recursion.
+
+The design note follows, written against master at `1af3889`.
 
 Line references are against that commit. `AD.Lite.fs` means
 `src/WldMr.Numerics.DiffSharp/AD.Lite.fs` (4,224 lines) unless said otherwise.

@@ -78,6 +78,22 @@ module Lite =
             Blas.daxpy(xl, -1., y, 1, x', 1)
             x'
 
+    static member inline Gather_V(x: float[], ks: int[]) =
+        let r = Array.zeroCreate ks.Length
+        for i in 0 .. ks.Length - 1 do
+            r.[i] <- x.[ks.[i]]
+        r
+
+    static member inline Scatter_V(x: float[], ks: int[], n: int) =
+        let r = Array.zeroCreate n
+        for i in 0 .. ks.Length - 1 do
+            let k = ks.[i]
+            // Duplicates add, in ascending `i` — the same left fold per slot as
+            // a CSR-transpose mat-vec built from `ks`, which is what makes the
+            // gather formulation bit-identical to the selection-matrix one.
+            r.[k] <- r.[k] + x.[i]
+        r
+
     // BLAS
     static member inline Mul_Dot_V_V(x: float[], y: float[]) =
         let xl = x.Length

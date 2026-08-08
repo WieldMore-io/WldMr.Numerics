@@ -23,6 +23,8 @@ let private usage () =
   printfn "                                              # one forward, N reverse passes"
   printfn "  dotnet run -c Release -- profile [n=200] [depth=8]"
   printfn "                                              # bare loop, for an external profiler"
+  printfn "  dotnet run -c Release -- gather [reps=20]   # InterpolateV shape: CSR vs gather,"
+  printfn "                                              # bit-parity asserted"
 
 /// Parse a positive int, or report which argument was wrong.
 let private posInt (name: string) (s: string) =
@@ -41,6 +43,7 @@ let main argv =
     Phases.census (Graph.spec 8)
     printfn ""
     BenchmarkRunner.Run<Benchmarks.AdTapeBenchmark>() |> ignore
+    BenchmarkRunner.Run<Benchmarks.GatherBenchmark>() |> ignore
     0
   | [ "census" ] -> Phases.census (Graph.spec 8); 0
   | [ "census"; d ] ->
@@ -75,6 +78,11 @@ let main argv =
     match posInt "depth" d, posInt "reps" r with
     | Some d, Some r -> Phases.seedPasses (Graph.spec d) r; 0
     | _ -> 1
+  | [ "gather" ] -> Phases.gather 20; 0
+  | [ "gather"; r ] ->
+    match posInt "reps" r with
+    | Some r -> Phases.gather r; 0
+    | None -> 1
   | [ "profile" ] -> Phases.profile (Graph.spec 8) 200; 0
   | [ "profile"; n ] ->
     match posInt "n" n with

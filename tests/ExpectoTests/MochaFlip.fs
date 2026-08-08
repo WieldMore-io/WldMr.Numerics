@@ -45,6 +45,9 @@ module Expect =
 #if FABLE_COMPILER_PYTHON
   let inline equal message x y =
     Fable.Pyxpecto.Expect.equal x y message
+
+  let isTrue message x =
+    Fable.Pyxpecto.Expect.isTrue x message
 #endif
 #if FABLE_COMPILER_JAVASCRIPT
   let isTrue message x =

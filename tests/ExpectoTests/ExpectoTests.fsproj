@@ -8,6 +8,7 @@
     <Compile Include="BasicTests.fs" />
     <Compile Include="CscMatTests.fs" />
     <Compile Include="AdjointLifetimeTests.fs" />
+    <Compile Include="GatherTests.fs" />
     <Compile Include="Main.fs" />
     <None Include="paket.references" />
   </ItemGroup>
