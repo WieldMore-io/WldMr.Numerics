@@ -47,7 +47,8 @@ reverse pass of `Mul_DMCons_DV` computes `DM.Transpose(cons) * dA`
 forward call.
 
 Measured cost, from the MarketBuild CPU/allocation profile
-(`WldMr.Analytics/plans/marketbuild-cost.md:753-769`): **~5.5 MB/fit**, with
+(`WldMr.Analytics/plans/marketbuild-cost-done.md`, "Where the allocation was
+(post-bond-batch)"): **~5.5 MB/fit**, with
 49.6 MB of `Double[]` attributed to `InterpolateV` across a 20-fit trace, plus
 the `Int32[]` index arrays, the `SparseDouble`/`DM` wrappers, and
 `CsrMat.mulV` cost downstream (76.7 MB of `Double[]` across all callers). It
