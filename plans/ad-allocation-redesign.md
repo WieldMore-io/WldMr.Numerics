@@ -563,6 +563,23 @@ always a reference type, so .NET shares a single canonical instantiation and the
 is no code duplication to pay for. It compiles on all three targets unchanged —
 `member val` was already in Fable-compiled code (`Util.fs`'s `GlobalTagger`).
 
+**The byte arithmetic, and the half of it that is not the refs.** Measured per
+node: `FSharpRef<D>` 24 B + `FSharpRef<uint32>` 24 B -> `NodeState<D>` 32 B, and
+`DR` itself 56 B -> 48 B because the case lost a field. So 104 -> 80 B, a 24 B
+saving, and 34,024 x 24 = 0.78 MB — exactly the measured 43.1 -> 42.3. Worth
+separating because **8 of those 24 bytes are the DU shrinking, not the merge**:
+any future field removed from `DR`/`DVR`/`DMR` is worth ~8 B a node on its own,
+and scoring this change on the ref pair alone would have undersold it by a third.
+
+`member val` was checked against the alternative rather than assumed: the emitted
+IL is 7–8 bytes per accessor, non-virtual, so RyuJIT inlines all of them to a bare
+`ldfld`/`stfld` and a `val mutable` field would produce identical machine code —
+while costing the verbose explicit-constructor form, a public mutable field on a
+package-public type, and a re-verification on two Fable targets. The Fable output
+was checked too: JS emits a plain class with `this["A@"]`, and Python emits
+`self._A` as a **plain attribute**, not a `@property`, so even the slowest target
+has no descriptor protocol in the way.
+
 Results: fingerprint `15a6fee3…f52d` **unchanged**, 43.1 -> 42.3 MB/fit, wall
 17.7 ms (unmoved, 17.5–17.9 across three runs), GC pause 2.59 -> 2.59 ms. Green on
 18 Expecto + 16 LinAlg + 37 Checks (.NET), 18 Fable/JS, 18 Fable/Python, and
@@ -583,6 +600,18 @@ downstream 446 + 222.
 > forward pass and *exactly* unchanged on reset and push — which is what a
 > construction-side-only change should look like, and a useful shape to check
 > before spending the downstream loop.
+
+**Left on the table deliberately.** The three `reverseProp` blocks re-read `st.F`
+after the adjoint accumulation, and the JIT cannot forward the stored value across
+`D.op_Addition` / `DV.Add_V_V_Inplace` / `DM.Add_M_M_Inplace` — it has no way to
+prove those don't touch this node's state. Hoisting to `let f = st.F - 1u` is
+order-preserving and saves one L1 load a node a pass: ~40 µs against a 17.7 ms fit
+whose run-to-run spread is 400 µs, so **0.25%, an order of magnitude under the
+noise**. It touches a fingerprint-gated block, so it is not worth a release loop of
+its own — fold it in when these blocks are next opened for something real. The
+matching double-reads in `reverseReset` are genuinely free (nothing sits between
+the store and the load, so store-to-load forwarding removes them) and want no
+change at all.
 
 > [!WARNING]
 > The object trace's own MB/fit read 41.0 against `-- profile`'s 42.3, a 3% gap
@@ -703,7 +732,26 @@ number is what a rewrite would have to be worth to justify itself.
    0.8 MB, fingerprint unchanged, wall unmoved. Re-promoted from (e), which had
    dismissed it on a byte reading. See "Done: the ref merge".
 7. **Pool adjoint buffers by length across a tape** — 25,426 arrays a fit, 3.1%.
-   **The next thing to do.**
+   **The next thing to do**, and step 6 is what makes it cheap: a pool needs
+   per-node bookkeeping (a rented-buffer handle, a length, or a generation stamp)
+   that the node did not carry. Before the merge that meant a *third* ref cell and
+   a fifth DU field — another arity change across the same ~118 sites. After it, it
+   is one `member val` on `NodeState` and **zero pattern sites touched**.
+   `NodeState<'T>` also has 4 bytes of tail padding, so any field of 4 bytes or
+   fewer is free; widening `F` past `uint32`, or adding a second reference, costs 8.
+
+   Two shape notes for that work:
+   - **`NodeState` can hold the buffer but not the pool.** The pool must be
+     per-traversal-call for the same re-entrancy reason `SlotStack` is:
+     `FixedPoint_D` re-enters `reverseProp`/`reverseReset` while an outer traversal
+     is live. So the pool is a local alongside `SlotStack`; `NodeState` only records
+     what the node currently holds.
+   - **`A: 'T` is the wrapper (`DV`), not the storage (`float[]`)**, and pooling is
+     keyed on the storage's length. Reset already peels it
+     (`match st.A with DV a when a.Length = dPrimal.Length`), so nothing is blocked
+     — but an O(1) length on the `DM` path means unwrapping through
+     `GenMat`/`ColMajor`, and a cached length field on `NodeState` is the obvious
+     home if that shows up.
    The narrow half of (a): adjoint buffers are node-owned and `adjoint` already
    copies on the way out, so this needs none of the primal-escape audit that makes
    the full arena expensive. See "What is left, measured".

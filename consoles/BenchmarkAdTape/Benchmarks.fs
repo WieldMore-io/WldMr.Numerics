@@ -12,8 +12,8 @@ open WldMr.Numerics.DiffSharp.AD.Float64
 /// 119 MB and `DOps.pushRec` 52 MB — 23% of the `fitOisCurves` stage, and pure
 /// reverse-mode tape bookkeeping rather than arithmetic. The reading to be
 /// tested is that a reset should zero adjoints in place, and this one allocates
-/// a fresh zero vector per node instead (`AD.Lite.fs:3428`,
-/// `dARef.Value <- DV.ZeroN dPrimal.Length`).
+/// a fresh zero vector per node instead (`reverseReset`'s shape-mismatch arm,
+/// `st.A <- DV.ZeroN dPrimal.Length`).
 ///
 /// **Allocated bytes are the metric here, not time.** The `Mean` column is
 /// incidental; read `Allocated`.
