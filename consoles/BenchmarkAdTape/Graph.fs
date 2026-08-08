@@ -158,3 +158,52 @@ let nodeCount (spec: GraphSpec) = 1 + spec.Depth * 7 + 1
 /// kills the hypothesis — `Phases.phases` prints the ratio.
 let adjointSlots (spec: GraphSpec) =
   spec.Pillars + spec.Depth * (5 * spec.Points + 2 * spec.Pillars)
+
+
+/// The `InterpolateV` shape from `WldMr.Analytics` (plans/ad-gather.md §3): the
+/// selection-CSR formulation exactly as `Curve/LinearInterpolation.fs` builds
+/// it per call, and the gather rewrite that replaces it. Standard harness
+/// width: 40 pillars, 320 points.
+module GatherShape =
+
+  let m = 40
+  let n = 320
+
+  /// sorted knots, and sorted query points spanning them
+  let x : float[] = Array.init m (fun i -> 0.25 * float i)
+  let ts : float[] = Array.init n (fun i -> 0.25 * float (m - 1) * (float i + 0.5) / float n)
+  /// left-knot index per query — non-decreasing because `ts` is sorted, which
+  /// the hand-built CSR transpose requires (gather itself does not)
+  let ks : int[] = ts |> Array.map (fun t -> min (m - 2) (int (t / 0.25)))
+  let c0f : float[] = Array.init m (fun i -> 1.0 + 0.01 * float i)
+  let c1f : float[] = Array.init m (fun i -> 0.5 + 0.001 * float i)
+
+  /// exactly `InterpolateV`: selection CSR plus its hand-built transpose,
+  /// constructed on every call — the transpose exists only so the reverse pass
+  /// of `Mul_DMCons_DV` gets `DM.Transpose(cons)` for free
+  let interpolateCsr (c0: DV) (c1: DV) : DV =
+    let csrS =
+      { Values = Array.create n 1.; Columns = ks
+        RowIndices = Array.init (n + 1) id; NCols = m }
+    let csrST =
+      let colIndices = Array.zeroCreate (m + 1)
+      let mutable ksIdx = 0
+      for i in 0 .. m - 1 do
+        while ksIdx < n && i >= ks.[ksIdx] do ksIdx <- ksIdx + 1
+        colIndices.[i + 1] <- ksIdx
+      { Values = Array.create n 1.; Columns = Array.init n id
+        RowIndices = colIndices; NCols = n }
+    let dmS = DM (SparseDouble (csrS, csrST))
+    let vX = CsrMat.mulV csrS x
+    let dTsX = Blas.sub_V_V (ts, vX)
+    let a = dmS * c0
+    let b = (dmS * c1) .* DV dTsX
+    DV.Add_V_V_Inplace(a, b)
+
+  /// the plans/ad-gather.md §3 rewrite
+  let interpolateGather (c0: DV) (c1: DV) : DV =
+    let vX = Array.init n (fun i -> x.[ks.[i]])
+    let dTsX = Blas.sub_V_V (ts, vX)
+    let a = DV.Gather(c0, ks)
+    let b = DV.Gather(c1, ks) .* DV dTsX
+    DV.Add_V_V_Inplace(a, b)

@@ -108,6 +108,8 @@ module ErrorMessages =
     let InvalidArgMM() = invalidArg "" "Matrices must have same shape."
     let InvalidArgVMRows() = invalidArg "" "Length of vector must match number of rows of matrix."
     let InvalidArgVMCols() = invalidArg "" "Length of vector must match number of columns of matrix."
+    let InvalidArgGatherIndex() = invalidArg "" "Gather/scatter index out of range."
+    let InvalidArgScatterLength() = invalidArg "" "Scatter value vector and index array must have same length."
 
 
 /// Tagger for generating incremental integers

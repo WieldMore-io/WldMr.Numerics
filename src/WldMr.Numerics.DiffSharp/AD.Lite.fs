@@ -1183,6 +1183,49 @@ and DV =
         let inline r_c_d(a, b) = AddSubVector_DVCons_DV(i, b)
         DV.Op_DV_DV_DV (a, b, ff, fd, df_da, df_db, df_dab, r_d_d, r_d_c, r_c_d)
 
+    // The op body without validation, for the primal/tangent recursion below —
+    // `Gather` has already validated `ks` against this exact length by the time
+    // any of these fire.
+    static member private GatherNoCheck (a: DV, ks: int[]) =
+        let inline ff(a) = Backend.Gather_V(a, ks)
+        let inline fd(a: DV) = DV.GatherNoCheck(a, ks)
+        let inline df(cp: DV, ap: DV, at: DV) = DV.GatherNoCheck(at, ks)
+        let inline r(a) = Gather_DV(a, ks)
+        DV.Op_DV_DV (a, ff, fd, df, r)
+
+    /// `result.[i] = a.[ks.[i]]`. Linear; its reverse rule is `Scatter`. The
+    /// index array is captured without copying — the caller must not mutate it
+    /// after the call, and the tape keeps it alive until the tape dies.
+    static member Gather (a: DV, ks: int[]) =
+        // Validated always: Fable→JS reads `undefined` (NaN) and drops writes
+        // out of bounds, Fable→Python wraps negatives — only .NET throws on its
+        // own. The bound is hoisted: per-element `.Length` calls dominate the op.
+        let alen = a.Length
+        for i in 0 .. ks.Length - 1 do
+            let k = ks.[i]
+            if k < 0 || k >= alen then ErrorMessages.InvalidArgGatherIndex()
+        if ks.Length = 0 then DV.Zero
+        else DV.GatherNoCheck(a, ks)
+
+    static member private ScatterNoCheck (b: DV, ks: int[], n: int) =
+        let inline ff(b) = Backend.Scatter_V(b, ks, n)
+        let inline fd(b: DV) = DV.ScatterNoCheck(b, ks, n)
+        let inline df(cp: DV, bp: DV, bt: DV) = DV.ScatterNoCheck(bt, ks, n)
+        let inline r(b) = Scatter_DV(b, ks)
+        DV.Op_DV_DV (b, ff, fd, df, r)
+
+    /// The adjoint pair of `Gather`: a length-`n` vector where slot `ks.[i]`
+    /// accumulates `b.[i]` — duplicate indices add, in ascending `i` order.
+    /// First-class (rather than private to the reverse pass) because nested AD
+    /// needs it to be a proper op: a `DVF` adjoint dispatches through it.
+    static member Scatter (b: DV, ks: int[], n: int) =
+        if ks.Length <> b.Length then ErrorMessages.InvalidArgScatterLength()
+        for i in 0 .. ks.Length - 1 do
+            let k = ks.[i]
+            if k < 0 || k >= n then ErrorMessages.InvalidArgGatherIndex()
+        if ks.Length = 0 then DV.ZeroN n
+        else DV.ScatterNoCheck(b, ks, n)
+
     // DV - number binary operations
     static member (+) (a:DV, b:number) = a + D b
     static member (-) (a:DV, b:number) = a - D b
@@ -2819,6 +2862,8 @@ and TraceOp =
     | AddSubVector_DVCons_DV of int * DV
     | ReshapeCopy_DM_DV      of DM
     | Slice_DV               of DV * int
+    | Gather_DV              of DV * int[]
+    | Scatter_DV             of DV * int[]
     | Diagonal_DM            of DM
     | ReLU_DV                of DV
     | Sigmoid_DV             of DV
@@ -2950,6 +2995,9 @@ module DV =
 
     /// Converts vector `v` into a column matrix
     let inline toColDM (v:DV) = v.ToColDM()
+
+    /// `result.[i] = v.[ks.[i]]` — see `DV.Gather`
+    let inline gather (ks: int[]) (v: DV) = DV.Gather(v, ks)
 
 
 //    /// Creates a vector with `n` elements, each with value `v`
@@ -3556,6 +3604,8 @@ module DOps =
                             | AddSubVector_DVCons_DV(_, b) -> resetRec (bxd b :: t)
                             | ReshapeCopy_DM_DV(a) -> resetRec (bxd a :: t)
                             | Slice_DV(a, _) -> resetRec (bxd a :: t)
+                            | Gather_DV(a, _) -> resetRec (bxd a :: t)
+                            | Scatter_DV(b, _) -> resetRec (bxd b :: t)
                             | Diagonal_DM(a) -> resetRec (bxd a :: t)
                             | ReLU_DV(a) -> resetRec (bxd a :: t)
                             | Sigmoid_DV(a) -> resetRec (bxd a :: t)
@@ -3904,6 +3954,11 @@ module DOps =
                             | Slice_DV(a, i) ->
                                 a.A <- DV.AddSubVector(a.A, i, dA)
                                 pushRec ((bxv DV.Zero a) :: t)
+                            // Through the central accumulate, not the `.A <-` bypass style
+                            // above: the materialized vector is a fresh, uniquely-owned
+                            // contribution, and a `DVF` adjoint dispatches through the ops.
+                            | Gather_DV(a, ks) -> pushRec ((bxv (DV.Scatter(dA, ks, a.Length)) a) :: t)
+                            | Scatter_DV(b, ks) -> pushRec ((bxv (DV.Gather(dA, ks)) b) :: t)
                             | Diagonal_DM(a) ->
                                 a.A <- DM.AddDiagonal(a.A, dA)
                                 pushRec ((bxm DM.Zero a) :: t)

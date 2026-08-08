@@ -235,3 +235,52 @@ let seedPasses (spec: Graph.GraphSpec) (reps: int) =
     (Graph.SeedPasses - 1) rest (rest / float (Graph.SeedPasses - 1))
   printfn "  total                     %12.0f B  (%.1f%% of it reverse)"
     (fwd + first + rest) (100.0 * (first + rest) / (fwd + first + rest))
+
+
+/// Both formulations of the `InterpolateV` shape (`Graph.GatherShape`):
+/// forward-build and reverse-pass allocation for each, behind a standing
+/// bit-parity assertion — value and both gradients must differ by exactly
+/// 0.0, which is plans/ad-gather.md §7's claim in runnable form.
+let gather (reps: int) =
+  let seed = DV (Array.create Graph.GatherShape.n 1.0)
+  let runOnce (interp: DV -> DV -> DV) =
+    let i = WldMr.Numerics.DiffSharp.Util.GlobalTagger.Next
+    let c0 = DV Graph.GatherShape.c0f |> makeReverse i
+    let c1 = DV Graph.GatherShape.c1f |> makeReverse i
+    let a0 = alloc ()
+    let y = interp c0 c1
+    let a1 = alloc ()
+    reverseProp (seed :> dobj) (y :> dobj)
+    let a2 = alloc ()
+    let p = y.P |> DV.toFloats
+    let g0 = (c0 |> adjoint: DV) |> DV.toFloats
+    let g1 = (c1 |> adjoint: DV) |> DV.toFloats
+    p, g0, g1, a1 - a0, a2 - a1
+
+  // Parity before numbers, so a broken formulation cannot publish a fast row.
+  let pC, g0C, g1C, _, _ = runOnce Graph.GatherShape.interpolateCsr
+  let pG, g0G, g1G, _, _ = runOnce Graph.GatherShape.interpolateGather
+  let maxAbsDiff (a: float[]) (b: float[]) =
+    Array.map2 (fun (x: float) y -> abs (x - y)) a b |> Array.max
+  let dv, d0, d1 = maxAbsDiff pC pG, maxAbsDiff g0C g0G, maxAbsDiff g1C g1G
+  if dv <> 0.0 || d0 <> 0.0 || d1 <> 0.0 then
+    failwithf "bit parity broken: value %g, grad c0 %g, grad c1 %g — see plans/ad-gather.md" dv d0 d1
+
+  let measure interp =
+    runOnce interp |> ignore // warm
+    let mutable fwd = 0L
+    let mutable rev = 0L
+    for _ in 1 .. reps do
+      let _, _, _, f, r = runOnce interp
+      fwd <- fwd + f
+      rev <- rev + r
+    float fwd / float reps, float rev / float reps
+
+  let fC, rC = measure Graph.GatherShape.interpolateCsr
+  let fG, rG = measure Graph.GatherShape.interpolateGather
+  printfn "gather  pillars=%d points=%d, %d reps — values and gradients bit-identical"
+    Graph.GatherShape.m Graph.GatherShape.n reps
+  printfn "  formulation      forward B/call   reverse B/pass"
+  printfn "  selection CSR  %16.0f %16.0f" fC rC
+  printfn "  gather         %16.0f %16.0f" fG rG
+  printfn "  saving         %16.0f %16.0f" (fC - fG) (rC - rG)
