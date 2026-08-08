@@ -540,17 +540,23 @@ Also worth recording: **~25% of `Double[]` is Analytics, not AD** —
 ### Correction: the ref cells are a count item, not a byte item
 
 Option (e) dismissed "merging `DVR`'s two ref cells into one state object" because
-"the refs are ~1% of the trace". That was a **byte** judgement and the count
-profile overturns it: the fan-out refs (33,892 a fit) and adjoint refs (18,603 +
-15,282 = 33,885) are **67,777 objects a fit, 6.4% of everything a MarketBuild
-allocates** — 24 bytes each, which is exactly why bytes hid them. Merging the pair
-into one small mutable node-state object removes 33,866 objects a fit, **3.2%**.
+"the refs are ~1% of the trace". That was a **byte** judgement and the count profile
+overturns it — 24 bytes each is exactly why bytes hid them.
 
-It is still a large mechanical edit — every `DVR(...)`/`DR(...)` construction and
-pattern in the fork — and it is a node-*representation* change rather than a
-traversal one, so it wants its own fingerprint gate. But it is now comparable in
-value to the array-backed worklists rather than a rounding error, and it is the one
-piece of the compact-tape idea that can be taken incrementally.
+Measured after the worklist and Zero work, so these are the numbers to beat:
+fan-out refs 33,284 a fit, adjoint refs 18,356 + 14,964 = 33,320, i.e. **66,604
+objects a fit, 8.3% of everything a MarketBuild allocates**, against 33,320 nodes —
+exactly two per node. Merging the pair into one small mutable node-state object
+removes ~33,300 a fit, **4.1%**, and takes a node from 4 construction objects to 3.
+
+**Size of the edit**: 49 `DVR(`, 30 `DR(` and 39 `DMR(` occurrences — construction
+sites and match patterns together, ~118 in all, against the ~470 the worklists took.
+Only 3 `ref 0u` fan-out initialisers, all in the three `R` constructors, so the
+construction side is nearly free; the bulk is the patterns. Unlike the worklists this
+is a node-*representation* change rather than a traversal one, so it cannot perturb
+traversal or evaluation order at all — but it still wants its own fingerprint gate,
+because the `.A`/fan-out accessors are touched. It is the one piece of the
+compact-tape idea that can be taken incrementally.
 
 ### Spending the fingerprint
 
