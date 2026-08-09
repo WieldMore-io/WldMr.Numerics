@@ -255,7 +255,7 @@ is a plain `DV` (and, for push, `v` too), falling back to allocation otherwise.
    commit. Reset allocation went 115,656 → 2,136 B/pass and is now flat in
    vector width. Cross-runtime tests in `tests/ExpectoTests/AdjointLifetimeTests.fs`.
 3. ~~**`:576`**~~ — **done 2026-08-07** as option (d) of
-   `ad-allocation-redesign.md`: `DV.R`/`DM.R` seed the adjoint ref with a shared
+   `ad-allocation-redesign.md`: `DV.R`/`DM.R` seed the node's adjoint with a shared
    empty sentinel and reset's shape-mismatch arm materialises on first visit.
    The "buffers are full-length by push time" invariant is pinned by a test, and
    the harness's phases/seeds modes now report the first pass separately.
