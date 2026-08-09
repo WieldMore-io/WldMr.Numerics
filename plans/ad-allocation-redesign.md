@@ -503,8 +503,8 @@ what this fork actually does, that checklist splits three ways.
 
 | item | objects/fit | share of fit | the lever |
 | --- | ---: | ---: | --- |
-| `D` + `DV` wrappers | 174,759 | 21.7% | fusion — one per op result |
-| `Double[]` (AD's ~75% of 110,101) | ~83,000 | 10.3% | pooling; see the split below |
+| `D` + `DV` wrappers | 174,759 | 21.7% | ~~fusion — one per op result~~ **not fusion's to take — see "fusion's real ceiling"; only ~1 wrapper in 5 belongs to a tape node** |
+| `Double[]` (AD's ~75% of 110,101) | ~83,000 | 10.3% | ~~pooling~~ **withdrawn — see the pooling costing** |
 | ref cells | 66,604 | 8.3% | ~~merge the two per node~~ **done, see below** |
 | TraceOps | ~25,000 | 3.1% | fusion |
 | `DVR` + `DR` nodes | 33,320 | 4.1% | fusion, or the index tape |
@@ -539,6 +539,58 @@ still need the audit. Worth ~25,000 objects a fit (3.1%) on its own.
 Also worth recording: **~25% of `Double[]` is Analytics, not AD** —
 `CstFwdCurve.MinusTotalRates` 8,631, `ResolvedFixings.dailySeries` 7,288,
 `DayCount.YearFraction` 2,667 a fit. Unexamined, and in-repo for that consumer.
+
+### The TraceOp census, re-measured (2026-08-09) — and fusion's real ceiling
+
+Step 8 said to re-measure before discussing fusion rather than reuse the chain
+named in step 2, since the gather adoption replaced the CSR-matvec layer that
+referred to. Done, on the current build. **24 of the 240 defined `TraceOp` cases
+are used at all**, totalling 33,029 a fit — 4.3%, one per reverse node, as it
+should be.
+
+| op | count/fit | of ops |
+| --- | ---: | ---: |
+| `Gather_DV` | 5,872 | 17.8% |
+| `Mul_Had_DV_DVCons` | 4,425 | 13.4% |
+| `Mul_D_DCons` | 4,332 | 13.1% |
+| `Add_DV_DV` | 2,907 | 8.8% |
+| `Exp_DV` | 2,793 | 8.5% |
+| `Add_D_DCons` | 1,653 | 5.0% |
+| `Neg_D` | 1,530 | 4.6% |
+| *18 more* | 9,517 | 28.8% |
+
+Top five are 61.5%. The scalar ops together (`Mul_D_DCons`, `Add_D_DCons`, `Neg_D`,
+`Div_D_D`, `Sub_D_DCons`, `Div_D_DCons`, `Add_D_D`, `Exp_D`, `Sub_D_D`,
+`Pow_D_DCons`) are 12,189, 37% of all ops. **`Gather_DV` is now the single largest
+op**, which it was not when step 2 was written — it did not exist.
+
+**The ceiling is lower than this plan has been claiming.** The "What is left" table
+credits fusion with the `D` + `DV` wrappers, 174,616 a fit, 21.7%. That is wrong as
+an upper bound on what fusion removes. There are 174,616 wrappers against 33,181
+reverse nodes — **5.3 wrappers per node** — because most wrappers come from primal
+arithmetic that never becomes a tape node at all. Fusion removes objects only for
+the nodes it *eliminates*, and eliminating one node saves the node (48 B), its
+`NodeState` (32 B), its `TraceOp` (32–40 B), its adjoint buffer, and one result
+wrapper — about 5 objects. So:
+
+> **fusion's prize = (nodes eliminated) x ~5 objects**, and nodes eliminated is
+> bounded by the *smaller* member of each fused chain.
+
+The obvious chain is the discount-factor shape, `Exp_DV(Mul_Had_DV_DVCons(...))`,
+bounded by `Exp_DV` at 2,793 — so ~14,000 objects, **1.8% of the fit**, for one
+fused kernel plus its fingerprint argument. Fusing every scalar chain in the census
+is optimistically another 3–4%. That is the honest shape of step 8: a grind of 1–2%
+steps, each needing a per-kernel numerical argument, not one 20% move.
+
+> [!WARNING]
+> **Per-frame counts in these traces are unreliable to ±50%, even though per-type
+> totals are good to ~3%.** `reverseReset` allocates exactly one `float[]` and one
+> `DV` per materialised adjoint — the counter says both are 20,096 a fit — yet the
+> trace attributes 28,465 `Double[]` (+42%) and 10,378 `DV` (−48%) to that same
+> frame. Type totals aggregate every sample for a type; a frame split divides the
+> same samples among call sites and runs out of them. **Rank with frames, size with
+> types, and count with a counter.** Every per-frame figure in this note and in
+> `marketbuild-cost.md` carries this error bar.
 
 ### The adjoint-pooling costing (2026-08-08) — measured, and it kills step 7 as written
 
