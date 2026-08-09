@@ -6,11 +6,24 @@
 > these options wrongly: the reverse pass's per-node bookkeeping is invisible in
 > bytes at wide nodes and dominant in counts at every width.
 >
-> **All of it is now removed**, plus two allocations that bought nothing: a
-> MarketBuild fit is 1,059,787 -> **805,337 objects (-24%)**, 49.8 -> **43.1 MB
-> (-13.5%)** and 18.9 -> **17.7 ms (-6.3%)**, fingerprint unchanged throughout.
-> What is left of the tape is the 4 objects per node that construction costs; see
-> "The ceiling, quantified".
+> **All of it is now removed**, plus two allocations that bought nothing, the two
+> `ref` cells per node, and half the zeroing work in the reset. A MarketBuild fit
+> is 1,059,787 -> **771,313 objects (-27.2%)**, 49.8 -> **42.2 MB (-15.3%)** and
+> 18.9 -> **17.5 ms (-7.4%)**, fingerprint unchanged throughout. Shipped as
+> WieldMore-io/WldMr.Numerics#23. What is left of the tape is the 3 objects per
+> node that construction costs; see "The ceiling, quantified".
+>
+> **Two queued steps were withdrawn by measurement, not by choice** — read those
+> sections before picking either back up. Adjoint pooling has no lifetime to pool
+> in ("The adjoint-pooling costing"), and fusion's ceiling is ~5 objects per node
+> *eliminated*, not the wrapper total ("The TraceOp census, re-measured").
+
+> [!NOTE]
+> **Line numbers in the 2026-08-07 sections point at the file as it was then.**
+> `AD.Lite.fs` has since moved by hundreds of lines and both traversals were
+> rewritten, so treat `:3473`-style references in "Where the bytes go per op" and
+> "Candidate directions" as archaeology. References added from 2026-08-08 onward
+> name symbols instead, which is what to do from here.
 
 **Status: direction-setting, 2026-08-07.** Follows `ad-tape-allocation.md`, whose
 steps 2 and 4 (buffer reuse on reset, `d1f4435`; in-place accumulation on push,
@@ -149,6 +162,9 @@ creates **1.06 M objects, ~65% of them AD**, and decomposes as:
 | push worklist cons cells | 56,842 | 1.68 |
 | push contribution tuples | 56,738 | 1.68 |
 | **traversal bookkeeping total** | **170,411** | **5.03** |
+
+This is the **1.3.20 baseline**, i.e. the diagnosis, not the current state: the
+traversal-bookkeeping rows are now zero and node construction is 3 per node, not 4.
 
 The fan-out refs (33,892) and adjoint refs (18,603 + 15,282) match the node count
 to within 0.1%, which is the check that this decomposition is reading the right
@@ -497,16 +513,23 @@ what this fork actually does, that checklist splits three ways.
   that `reverseProp` runs under `Array.Parallel.map` in Analytics' `fitOisCurves`,
   so a retained buffer must be per-call or thread-local, not module-level.
 
-### What is left, measured (2026-08-08, after the four changes above)
+### What was left after the first four changes (2026-08-08) — a superseded snapshot
 
-805,337 objects a fit, of which the AD cluster is ~420,000 (52%, down from ~65%):
+> [!NOTE]
+> This table is the state at 805,337 objects a fit, i.e. **before** the ref merge
+> and the first-visit fix. It is kept because it is what the next two decisions
+> were made from, and because three of its five rows turned out to be wrong in
+> instructive ways. The current state is 771,313; the corrected figures are in the
+> "lever" column and in the two costing sections that follow.
+
+Of that 805,337, the AD cluster was ~420,000 (52%, down from ~65%):
 
 | item | objects/fit | share of fit | the lever |
 | --- | ---: | ---: | --- |
-| `D` + `DV` wrappers | 174,759 | 21.7% | ~~fusion — one per op result~~ **not fusion's to take — see "fusion's real ceiling"; only ~1 wrapper in 5 belongs to a tape node** |
-| `Double[]` (AD's ~75% of 110,101) | ~83,000 | 10.3% | ~~pooling~~ **withdrawn — see the pooling costing** |
-| ref cells | 66,604 | 8.3% | ~~merge the two per node~~ **done, see below** |
-| TraceOps | ~25,000 | 3.1% | fusion |
+| `D` + `DV` wrappers | 174,759 | 21.7% | ~~fusion — one per op result~~ **not fusion's to take — only ~1 wrapper in 5 belongs to a tape node; see "fusion's real ceiling"** |
+| `Double[]` (AD's ~75% of 110,101) | ~83,000 | 10.3% | ~~pooling~~ **withdrawn — see "The adjoint-pooling costing"** |
+| ref cells | 66,604 | 8.3% | ~~merge the two per node~~ **done, −34,024** |
+| TraceOps | ~25,000 | 3.1% | **re-measured: 33,029, 4.3%** — fusion |
 | `DVR` + `DR` nodes | 33,320 | 4.1% | fusion, or the index tape |
 
 **The `Double[]` split is new information and it promotes one option.** By
@@ -514,7 +537,7 @@ allocating frame:
 
 | frame | arrays/fit | |
 | --- | ---: | --- |
-| `reverseReset` | 25,426 | **the lazy adjoint materialising on first reset** |
+| `reverseReset` | 25,426 | **the lazy adjoint materialising on first reset.** A counter later put the true figure at **20,096** — this row was 27% high, and a second trace read 28,465, 42% high the other way |
 | `DV.op_DotMultiply` | 14,309 | per-op result |
 | `ArrayModule.ZeroCreate` | 13,824 | per-op result (leaf is generic) |
 | `ff@712-19` | 10,404 | per-op result |
@@ -526,12 +549,18 @@ allocating frame:
 **`reverseReset` is the single largest producer of `Double[]` in the fit at 23%** —
 one adjoint buffer per node per tape, allocated at first reset since 1.3.18 made
 seeding lazy. Reset already reuses it on every *subsequent* pass (`Array.Clear` on
-a length match, `:3564`); what is unpooled is the first one per node.
+a length match); what is unpooled is the first one per node.
+
+> [!WARNING]
+> **The paragraph below is the reasoning that promoted adjoint pooling, and it is
+> wrong.** It is kept because the way it fails is the lesson: it argues from
+> *ownership* when the thing that decides pooling is *lifetime*. "The
+> adjoint-pooling costing" has the measurement that overturned it.
 
 That matters because it splits option (a) in two, and the halves are not equally
 hard. **Adjoint buffers have a clean owner and an existing escape discipline** —
-they belong to the node, and `adjoint` already hands out a copy (`:3352`, the
-1.3.13 precedent). Pooling them by length across a tape needs no primal-escape
+they belong to the node, and `DOps.adjoint` already hands out a copy (the 1.3.13
+precedent). Pooling them by length across a tape needs no primal-escape
 audit at all, which was the thing that made (a) "weeks". The per-op *result* arrays
 are the hard half: those escape through `DV.toFloats` and everywhere else, and
 still need the audit. Worth ~25,000 objects a fit (3.1%) on its own.
@@ -916,6 +945,8 @@ worklist changes. Requires per-kernel fingerprint proof: (c), both flavours.
 | array-backed worklists | **done** — a day, as costed, plus one measure-and-fix cycle |
 | uncached `Zero` / redundant `Add_V_V_Inplace` wrapper | **done** — an hour, once the counts were attributed by frame |
 | e. merge the two ref cells per node | **done** — a morning: 92 sites by regex, 6 by hand |
+| zero the adjoint on the first visit only | **done** — minutes, once a counter showed half the clears were redundant |
+| a. pool adjoint buffers | **withdrawn** — no lifetime to pool in; the mechanics were the easy part |
 | d. lazy `DV.R` adjoint | hours (+ a day of tri-target and downstream verification) |
 | c. forward fusion, per op family | days |
 | a. push-temp pool | days |
