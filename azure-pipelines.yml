@@ -5,16 +5,20 @@
 trigger:
 - master
 
+# Every run — PR, master and release — builds on the self-hosted pool, with no
+# Build.Reason gate. Deliberate: a second agent removed the single-agent SPOF, and this
+# repo has no deploy stage to protect. Web, Analytics and PhysicalRisk keep the gate.
+# Rules and measured numbers: wldmr-dev/docs/azure-devops-agent.md.
 pool:
-  name: Azure Pipelines
-  vmImage: 'ubuntu-latest'
+  name: Linux-Hetzner
 
 
 variables:
   major: 1
   minor: 3
   buildConfiguration: 'Release'
-  NUGET_PACKAGES: $(Pipeline.Workspace)/.nuget/packages
+  # NUGET_PACKAGES unset so NuGet uses ~/.nuget/packages — outside the workspace, and
+  # shared by every pipeline on the self-hosted agent.
   isNotaPR: $[ne(variables['Build.Reason'], 'PullRequest')]
   # One counter for every channel, keyed on major.minor - the master counter's existing
   # key, so the sequence continues without a seed. A shared counter means a PR
@@ -43,6 +47,10 @@ variables:
 name: $(buildName)
 
 steps:
+# clean pinned rather than inherited from the AzDO UI's per-pipeline Clean setting.
+- checkout: self
+  clean: true
+
 # - task: Cache@2
 #   inputs:
 #     key: 'paket | CommonDataLogic_v1 | "$(Agent.OS)" | paket.lock'
