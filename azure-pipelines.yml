@@ -11,6 +11,9 @@ trigger:
 # Rules and measured numbers: wldmr-dev/docs/azure-devops-agent.md.
 pool:
   name: Linux-Hetzner
+  # TEMPORARY: pin to the reprovisioned agent to verify template 9003. Do not merge.
+  demands:
+  - Agent.Name -equals vm-forge
 
 
 variables:
