@@ -19,6 +19,7 @@ let all =
       CscMatTests.tests
       AdjointLifetimeTests.tests
       GatherTests.tests
+      JacobianReverseTests.tests
     ]
 
 [<EntryPoint>]

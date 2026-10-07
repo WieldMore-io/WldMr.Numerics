@@ -1773,14 +1773,19 @@ and DM =
         MatT<D>.init m n (fun i j -> a.[i * n + j]) |> DM.OfMatD
 
     static member OfRows (s:seq<DV>) =
-        #if FABLE_COMPILER
-        failwith "Unsupported on FABLE"  // TODO ?
-        #else
-
         // TODO: check to ensure that all elements in the array are of the same type (D, DF, or DR) and have the same nesting tag
         match Seq.head s with
         | DV _ ->
+            #if FABLE_COMPILER
+            // array2D/Mat.ofArray2D are unavailable under Fable; fill the column-major
+            // MatT directly (same shape as the .NET arm produces)
+            let rows = s |> Seq.map DV.toFloats |> Seq.toArray
+            let m = rows.Length
+            let n = if m = 0 then 0 else rows.[0].Length
+            MatT<D>.init m n (fun i j -> D rows.[i].[j]) |> DM.OfMatD
+            #else
             s |> Seq.map DV.toFloats |> array2D |> Mat.ofArray2D |> ColMajor |> DM
+            #endif
         | DVF(_, _, ai) ->
             let ap = s |> Seq.map (fun x -> x.P)
             let at = s |> Seq.map (fun x -> x.T)
@@ -1788,7 +1793,6 @@ and DM =
         | DVR(_, _, _, ai) ->
             let ap = s |> Seq.map (fun x -> x.P)
             let cp = DM.OfRows(ap) in DM.R(cp, Make_DMRows_ofDVs(s |> Seq.toArray), ai)
-        #endif
 
     static member OfRows (m:int, a:DV) =
         match a with
@@ -4277,10 +4281,12 @@ module DiffOps =
         jacobianTv' f x v |> snd
 
     /// Original value and Jacobian of a vector-to-vector function `f`, at point `x`. Forward or reverse AD, depending on input and output dimensions.
+    /// The reverse branch holds the `jacobianTv''` reverse evaluator, so the forward pass of the
+    /// reverse mode AD runs once and each row costs only a reverse pass — not a full re-run of
+    /// `f` per row (the N+1 forward passes a partial application of `jacobianTv` costs).
     let jacobian' (f: DV -> DV) (x:DV) : DV * DM =
-        let o:DV = x |> f |> primal
+        let o, r = jacobianTv'' f x
         if 2 * x.Length > o.Length then
-            let r = jacobianTv f x
             (o, Array.init o.Length (fun j -> r (DV.standardBasis o.Length j)) |> DM.ofRows)
         else
             (o, Array.init x.Length (fun i -> jacobianv f x (DV.standardBasis x.Length i)) |> DM.ofCols)

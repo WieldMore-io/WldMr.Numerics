@@ -4,7 +4,10 @@
 day — see the step-4 section at the end. Step 3 is done as option (d) of
 `ad-allocation-redesign.md`, which now carries the direction; the gather op
 (`ad-gather.md`) is implemented and verified, awaiting the Analytics adoption
-PR after release.**
+PR after release. Step 5's in-library half (`jacobian'` holding the
+`jacobianTv''` reverse evaluator) landed 2026-10-07, uncommitted at the time
+of writing; the downstream half (CurveSolver's reset per instrument) is still
+open.**
 
 History: diagnosed 2026-08-05 with a harness (`consoles/BenchmarkAdTape`) and
 the cause confirmed at three specific lines. Step 1, the `adjoint`/`.A` consumer
@@ -269,17 +272,27 @@ is a plain `DV` (and, for push, `v` too), falling back to allocation otherwise.
 5. **Reset per reverse pass (`:3996`)** — the multiplier, potentially worth more
    than 2-4 combined for multi-seed workloads. It has two separable levers, and
    they live in different repos:
-   - *In-library.* `jacobian'` (`:4093`) re-runs the **entire forward pass per
-     row** — N+1 forward passes plus N reverse passes for an N-row Jacobian —
-     because `let r = jacobianTv f x` is a partial application of a
-     three-argument function. Holding `jacobianTv''`'s `r2` instead removes N
-     forward passes outright. Self-contained, cheap, testable here. Separately,
-     whether `r2` needs a *reset* per row at all is the open question `:4069`
-     poses.
+   - *In-library — done 2026-10-07.* `jacobian'` now holds `jacobianTv''`'s `r2`
+     instead of partially applying `jacobianTv`, and reuses its `r1` as the
+     primal, so the reverse branch costs **one** forward pass (was N+1 for an
+     N-row Jacobian). Measured (60 inputs, 100 rows, dotnet fsi +
+     `GC.GetTotalAllocatedBytes`): 41.56 MB → 31.30 MB per call (−24.7%);
+     forward evaluations 101 → 1, so the wall-clock win is larger than the
+     allocation number shows. Pinned by an evaluation-count test in
+     `tests/ExpectoTests/JacobianReverseTests.fs` (4 evaluations on the old
+     code for a 2→3 function, verified by a stash drill). Two Fable gaps
+     surfaced and were fixed in the same change: `DM.OfRows(seq<DV>)` was
+     `failwith "Unsupported on FABLE"` (now fills the column-major `MatT`
+     directly, as the `CsrMat.fs` Array2D-guard pattern does) and `exp` on a
+     `D` mis-resolves under Fable (`D.Exp` is the portable form — BasicTests
+     already documented this). `jacobian'`/`jacobian`/`jacobianT` therefore
+     work on all three targets for the first time. The open question whether
+     `r2` needs a reset per row at all remains open; `r2` keeps the
+     reset-per-pass protocol.
    - *Downstream, where the measured 27 MB is.* `CurveSolver.ff'` pays a full
      tape reset per instrument per Newton iteration, and reaches `reverseProp`
      directly rather than through `DiffOps` (zero `jacobianTv*` call sites in
-     the family). **Optimising `:4069` alone will not move the Analytics
+     the family). **Optimising `jacobian'` alone will not move the Analytics
      profile.** That fix is in `WldMr.Analytics` — or here, as a many-seed API
      that does not reset per seed, which is what `jacobianTv''` was meant to be
      and has never been used as.
