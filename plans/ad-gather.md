@@ -1,9 +1,14 @@
 # A first-class reverse-mode `gather` for `DV`
 
-**Status: implemented 2026-08-07 on the `ad-lazy-adjoint-init` branch. §1–§2
-and §4–§6 landed as designed; §3, the `InterpolateV` rewrite, was verified as a
-working-tree preview against the local feed and reverted — it ships as the
-Analytics adoption PR once a release carries the op.**
+**Status: done. §1–§2 and §4–§6 implemented 2026-08-07 on the
+`ad-lazy-adjoint-init` branch and merged as `37fb764` (2026-08-08). §3, the
+`InterpolateV` rewrite, shipped the same day as the Analytics adoption commit
+`ddf55475` ("Curve: interpolate through the gather primitive", 2026-08-08
+01:57), 35 minutes after the op merged — the "awaiting a release that carries
+the op" rollout never gated anything, because the op was already in released
+1.3.20/1.3.23 (and later 1.3.30) by then. Confirmed still in place 2026-10-07:
+`LinearInterpolation.fs:79-85` uses `DV.Gather` + `Add_V_V_Inplace` per §3's
+spec, against Analytics' pinned 1.3.23. Nothing outstanding.**
 
 Measured with the preview live: all 445 + 222 downstream tests green, the
 MarketBuild fingerprint **byte-identical** cross-process (§7 held end-to-end),
