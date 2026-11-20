@@ -4,7 +4,7 @@ storage: none
 framework: netstandard2.0, net11.0
 
 nuget Fable.Pyxpecto
-nuget FSharp.Core ~> 9
+nuget FSharp.Core >= 9.0.303 lowest_matching: true
 
 nuget System.Memory ~> 4.5.5
 
