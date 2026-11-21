@@ -7,5 +7,10 @@
 
   <PropertyGroup>
     <IsPackable>false</IsPackable>
+    <!-- NU1510: paket emits a PackageReference for every package in the lock, including the
+         netstandard2.0 polyfills (System.Memory, ...) that net11.0 already ships in-box.
+         NuGet's "will not be pruned" warning is harmless here and can't be fixed from
+         the project file. -->
+    <NoWarn>$(NoWarn);NU1510</NoWarn>
   </PropertyGroup>
 </Project>

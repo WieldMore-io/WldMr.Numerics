@@ -5,7 +5,9 @@
     <!-- The repo's default target. Deliberately no RuntimeMoniker / SimpleJob
          anywhere in this project: benchmarks pinned to an old framework stop
          being runnable once that framework is gone. -->
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
+    <!-- NU1510: see tests/Directory.Build.props -->
+    <NoWarn>$(NoWarn);NU1510</NoWarn>
     <Configurations>Debug;Release</Configurations>
     <IsPackable>false</IsPackable>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

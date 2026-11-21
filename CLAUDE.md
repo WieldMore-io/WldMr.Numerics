@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 Two NuGet packages of pure F# numerics that must compile **three ways**: .NET
-(`netstandard2.0` libs, `net8.0` tests), Fable → JavaScript, and Fable → Python.
+(`netstandard2.0` libs, `net11.0` tests), Fable → JavaScript, and Fable → Python.
 
 - `src/WldMr.Numerics.LinAlg` — BLAS-inspired dense/sparse linear algebra for small matrices, plus `Erf` special functions.
 - `src/WldMr.Numerics.DiffSharp` — fork of DiffSharp 0.8.3 (functional automatic differentiation), re-backed onto `LinAlg` instead of native BLAS/LAPACK.
