@@ -51,6 +51,16 @@ steps:
 - checkout: self
   clean: true
 
+# The agents' system dotnet predates global.json's SDK 11. This puts the pinned SDK
+# first on PATH (cached in the agent's tool directory after the first run). Nothing
+# this job runs needs an older runtime: the dotnet tools roll forward to 11.
+- task: UseDotNet@2
+  displayName: 'Install the .NET SDK from global.json'
+  inputs:
+    packageType: sdk
+    useGlobalJson: true
+    installationPath: $(Agent.ToolsDirectory)/dotnet
+
 # - task: Cache@2
 #   inputs:
 #     key: 'paket | CommonDataLogic_v1 | "$(Agent.OS)" | paket.lock'
